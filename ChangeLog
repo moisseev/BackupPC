@@ -1,0 +1,1847 @@
+#========================================================================
+#
+# ChangeLog - change log for BackupPC.
+#
+# DESCRIPTION
+#   Revision history for BackupPC, detailing significant changes between
+#   versions, most recent first.
+#
+# AUTHOR
+#   Craig Barratt  <cbarratt@users.sourceforge.net>
+#
+#========================================================================
+#
+# Version 3.3.0, released 14 Apr 2013.
+#
+# See http://backuppc.sourceforge.net.
+#
+#========================================================================
+
+#------------------------------------------------------------------------
+# Version 3.3.0, 14 Apr 2013
+#------------------------------------------------------------------------
+
+* Changed restore file name from restore.{zip|tar} to restore_$host_YYYY-MM-DD.{zip|tar},
+  where the date is the start date of the backup.  Originally suggested by Brad Alexander,
+  with a healthy debate among Les, Holger, Jeffrey, Adam, Carl and others.
+
+* Changed the timeStamp2 function in lib/BackupPC/CGI/Lib.pm so that times more than 330
+  days ago also include the year.  More recent times continue to use just the day of month
+  and month.
+
+* Made the directory path display (when browsing backups or history) a sequence of links,
+  allowing any parent directory to be quick selected.
+
+* Added Japanese language file lib/BackupPC/Lang/ja.pm submitted by Rikiya
+  Yamamoto.
+
+* Added Ukrainian language file lib/BackupPC/Lang/uk.pm submitted by Serhiy Yakimchuck.
+
+* Added Russian language file lib/BackupPC/Lang/ru.pm submitted by Sergei Butakov.
+
+* Patch from Alexander Moisseev that fixed file name encodings in zip files.
+  The default charset is now utf8.  Added a menu option to override the codepage.
+
+* Removed -N option from smbclient command in conf/config.pl to remain compatible
+  with more recent versions (3.2.3 and later) of smbclient.  Reported and discussed
+  by various people on the mail list, most recently by Jeff Boyce, Les Mikesell and
+  Holger Parplies.  Alexander Moisseev also submitted a patch.
+
+  Using smbclient >= 3.2.3 with the -N option will give a "tree connect failed:
+  NT_STATUS_ACCESS_DENIED" error.
+
+* Reapplied a patch from Tyler Wagner for lib/BackupPC/CGI/HostInfo.pl so that
+  empty email status info doesn't appear.  Somehow this missed 3.2.1.
+
+* Fixed check on $parfile in bin/BackupPC_archiveHost since it is numeric.
+  Fix submitted by Tim Massey.
+
+* Ensure $num is numeric in lib/BackupPC/CGI/View.pm error message
+  to avoid XSS attack.  Report and patch by Jamie Strandboge.
+
+* Ensure $num and $share in lib/BackupPC/CGI/RestoreFile.pm error messages
+  are escaped, to avoid XSS vulnerability.  Report and patch by Jamie Strandboge.
+  Also added some additional error checking and tweaked the handling of the
+  invalid number error message.
+
+* Fixed qw(...) deprecated syntax warnings in lib/BackupPC/Storage/Text.pm
+  and lib/BackupPC/Lib.pm.  Patch supplied by Juergen Harms.  Also got a
+  patch from Alexander Moisseev and report from Richard Shaw.
+
+* Fixed error in bin/BackupPC_sendEmail that caused accumulation of
+  per-host errors in the admin email to be skipped if a host's user
+  is not defined.  Reported by Marco Dalla Via.
+
+* Fixed lib/BackupPC/CGI/RSS.pm so that the base_url is correct for https.
+  Report and fix by Samuel Monsarrat.
+
+* Added more careful checking that IO::Dirent returns valid inodes and file types.
+  Suggested by Daniel Harvey.
+
+* Removed redundant setting of $Lang{CfgEdit_Title_Other} from all the Lang files.
+
+* Applied couple of fixes to Lib.pm suggested by Jeffrey Kosowsky for special case of where
+  configuration commands are fragments of perl code.
+
+#------------------------------------------------------------------------
+# Version 3.2.1, 24 Apr 2011
+#------------------------------------------------------------------------
+
+* Ensure $num is numeric in lib/BackupPC/CGI/Browse.pm to avoid XSS
+  attack.  Report and patch by Adam E.
+
+* Fixed application of "*" in $Conf{BackupFilesOnly} and
+  $Conf{BackupFilesExclud} for 2nd and later shares.  Reported
+  by Alessandro and Alexander Maringer.
+
+* Fixed email status check in lib/BackupPC/CGI/HostInfo.pl so that
+  empty email info doesn't appear; reported by Wayne Trevena,
+  and based on patch from Tyler Wagner.
+
+* Several fixes to FTP xfer mode related to file excludes, from
+  Dave Pearce.
+
+* Wrapped eval() around unpack() in lib/BackupPC/Attrib.pm to avoid
+  failures on corrupted attrib files; patch from Tim Connors.
+
+* Applied documention patch from Alexander Moisseev.
+
+#------------------------------------------------------------------------
+# Version 3.2.0, 31 Jul 2010
+#------------------------------------------------------------------------
+
+* Fixed code that detects duplicate shares in bin/BackupPC_dump
+
+* Added fix to lib/BackupPC/Zip/FileMember.pm to avoid bug in
+  Archive::Zip 1.30 when creating compressed archives.
+
+* Added Czech translation from Petr Pokorny.
+
+#------------------------------------------------------------------------
+# Version 3.2.0beta1, 24 Jan 2010
+#------------------------------------------------------------------------
+
+* Fixed FTP xfer method, with help from Holger Parplies and
+  Mirco Piccin.  FTP restores are still not supported.
+
+* Fixed bug in BackupPC_sendEmail where a user only receives
+  email about one host.
+
+* Fixed bug where top-level attrib file was linked into the pool with
+  the wrong digest, caused by it being updated multiple times with
+  multiple shares.  Reported by Jeff Kosowsky who also supplied a
+  patch.
+
+* Fixed bug in blackout calculation when multiple periods span midnight.
+  Report and patch from Joachim Falk.
+
+* Wrapped eval {} around attribute unpacking to make it more robust
+  to data corruption.  Path submitted by Tim Connors.
+
+* Ignore fileType 8 and 9 in BackupPC_tarCreate rather than consider then
+  errors.  These are sockets and unknown (eg: solaris door) files that
+  are created dynamicaly by applications - there is no meaningful restore
+  for these file types.
+
+* Changed lib/BackupPC/Lib.pm and lib/BackupPC/Storage/Text.pm based on
+  patches from Davide Brini and Holger Parplies so that main config
+  %Conf values are available in the host config file, allowing more
+  flexibility in perl expressions in the config files.  Users beware,
+  since the CGI editor won't work correctly if the config file have
+  perl expressions.
+
+* Obscure password values in LOG file when CGI editor is used to change
+  values.  Proposed by Steve Ling.
+
+* Added favicon.ico from Axel Beckert.  Thanks to Tyler Wagner for submitting
+  another version and reminding me about the first.
+
+* Replace "sort(HostSortCompare keys(%$Hosts))" with "sort HostSortCompare keys(%$Hosts)"
+  in bin/BackupPC to avoid an error with certain versions of perl.
+
+* Fixed $Conf{XX} links in the BackupPC.html and the CGI editor so they
+  correctly reference the definition.
+
+* Support ${VAR} style variable substitution in commands, in addition to
+  existing $VAR style.  Suggested by Jeffrey Kosowsky.
+
+* Clarified usage of -b and -w options to BackupPC_tarCreate.  Submitted by
+  Michael Selway.
+
+* Repaired Unable_to_connect_to_BackupPC_server Lang string and added new
+  string Unable_to_connect_to_BackupPC_server_error_message.  Proposed and
+  explained by Holger Parplies.
+
+* Added 'use utf8' to lib/BackupPC/Lang/pl.pm.  Reported by Michal Sawicz.
+
+* Minor updates to lib/BackupPC/Lang/fr.pm from Hubert Tournier.
+
+* Minor update to lib/BackupPC/Lang/en.pm from David Relson.
+
+#------------------------------------------------------------------------
+# Version 3.2.0beta0, 5 April 2009
+#------------------------------------------------------------------------
+
+* Added BackupPC::Xfer::Protocol as a common class for each Xfer
+  method.  This simplifies some of the xfer specific code.
+  Implemented by Paul Mantz.
+
+* Added FTP xfer method, implemented by Paul Mantz.
+
+* Added BackupPC::Xfer module to provide a common interface to the
+  different xfer methods.  Implemented by Paul Mantz.
+
+* Moved setting of $bpc->{PoolDir} and $bpc->{CPoolDir} after the
+  config file is read in BackupPC::Lib.  Fix proposed by Tim Taylor
+  and Joe Krahn, and rediscovered by several others including
+  Holger Parplies.
+
+* Create $TopDir and related data directories in BackupPC_dump
+  prior to hardlink test.  Requested by Les Stott.
+
+* Fixed encoding of email subject header in bin/BackupPC_sendEmail as
+  suggested by Jean-Claude Repetto.  Also changed $Conf{EMailHeaders}
+  charset to utf-8.  Also changed bin/BackupPC_sendEmail to not send
+  any per-client email if $Conf{BackupsDisable} is set.
+
+* Modified bin/BackupPC_dump to fix the case of a single partial
+  backup followed by a successful incremental resulting in a full
+  backup of level 1, rather than level 0.  Reported by Jeff
+  Kosowsky.
+
+* Fixed BackupPC::PoolWrite to always create the parent directory.
+  This fixed a case with rsync/rsyncd where a file like "-i" in the
+  top-level directory sorts before ".", which meant the directory
+  creation is after the file creation.  Also PoolWrite errors now
+  increment xferError count.  Reported by Jeff Kosowsky.
+
+* BackupPC now gives a more useful error message if BackupPC_nightly
+  takes more than 24 hours (ie: when the next one is meant to
+  start).  Reported by Tony Schreiner.
+
+* Fixed IO::Dirent run-time check.  Reported by Bernhard Ott and Tino Schwarze
+  debugged it.
+
+* Added more options to server backup command: rather than just forcing
+  an incremental or full backup, a regular (auto) backup can be queued
+  (ie: do nothing/incr/full based on schedule), as well as doing just
+  an incremental or full or nothing based on the client schedule.
+  Based on patches submitted by Joe Digilio.
+
+* Modified lib/BackupPC/CGI/RSS.pm to replace \n with \r\n in the RSS
+  http response headers.  Patch submitted by Thomas Eckhardt.
+
+* Modified bin/BackupPC_archive to allow the archive request file
+  name to contain spaces and dashes, requested by Tim Massey.
+
+* Fix to configure.pl for --no-fhs case to initialize ConfigDir
+  from Dan Pritts.  Also changed perl path to #!/usr/bin/env perl.
+
+* Modified bin/BackupPC_archiveHost to shell escape the output file
+  name.  That allows it to contain spaces and other special characters.
+  Requested by Toni Van Remortel.  Also updated bin/BackupPC_archiveHost
+  to shell escape and check other arguments.
+
+* Added $Conf{CmdQueueNice} to specify nice level for command queue
+  commands (eg: BackupPC_link and BackupPC_nightly).  Suggested by
+  Carl Soderstrom.
+
+* Added --config-override to configure.pl, allow config settings to be
+  set on the command line.  Proposed by Les Stott and Holger Parplies.
+
+* Moved call to NmbLookupFindHostCmd in BackupPC_dump to after the
+  check of whether a backup needs to be done.  This makes wakeonlan
+  work correctly, rather than waking up the client every WakeupSchedule.
+  Reported by David Lasker.
+
+* Improved settings for compression and compext in BackupPC_archiveStart
+  based on compression type, as proposed by Paul Dugas.  compext is now
+  empty, .gz or .bz2 based on ArchiveComp.
+
+* Changed bin/BackupPC_dump to not ping or lookup the host if
+  $Conf{BackupsDisable} is set.  Requested by John Rouillard.
+
+* Changed BackupPC_tarCreate to disable output of final nulls in
+  tar archive when -l or -L option is used.  Reported by John
+  Rouillard.
+
+* Added error check in BackupPC::Xfer::RsyncFileIO after call to
+  BackupPC::Xfer::RsyncDigest->digestStart(), reported by Jeff
+  Kosowsky.
+
+* Added variable substitution for host, confDir, client in
+  RsyncArgs, and also added option RsyncArgsExtra to allow
+  more easy customization of RsyncArgs on a per-client basis.
+  Proposed (with patch) by Raman Gupta.
+
+* Added Xfer error column to the host summary table in the CGI
+  interface.  Based on patch submitted by Jan Kratochvíl.
+
+* Minor fix to sprintf arguments in BackupPC::Attrib, reported by
+  Jonathan Kamens.
+
+* Fixed sort compareLOGName syntax in bin/BackupPC for perl 5.10.x,
+  reported by Jeff Kosowsky and Holger Parplies.
+
+* Fixed bin/BackupPC_archiveStart to set compression correctly,
+  and also set the file extension to .gz when compression is on.
+  Reported by Stephen Vaughan.
+
+* Fixed netbios name comparison in bin/BackupPC_dump and
+  bin/BackupPC_restore to just use the first 15 characters
+  of the host name.  Patch from Dan MacNeil.
+
+* Fixed nmblookup parsing in BackupPC::Lib::NetBiosInfoGet to ignore
+  entries with the <GROUP> tag.  Based on patch from Dan MacNeil.
+
+* Fixed BackupPC_dump so that the XferLOG file is saved when
+  DumpPreUserCmd fails.  Reported by John Rouillard.
+
+* Updated BackupPC.pod for $Conf{BackupsDisable}, reported by
+  Nils Breunese.
+
+* Added alternate freebsd-backuppc2 init.d script that is
+  more compact.  Submitted by Dan Niles.
+
+* Minor updates to lib/BackupPC/Lang/fr.pm from Nicolas STRANSKY
+  applied by GFK, and also from Vincent Fleuranceau.
+
+* Minor updates to lib/BackupPC/Lang/de.pm from Klaus Weidenbach.
+
+* Updates to makeDist for command-line setting of version and
+  release date from Paul Mantz.
+
+* Add output from Pre/Post commands to per-client LOG file, in addition
+  to existing output in the XferLOG file.  Patch from Stuart Teasdale.
+
+* lib/BackupPC/Xfer/Smb.pm now increments xferErrCnt on
+  NT_STATUS_ACCESS_DENIED and ERRnoaccess errors from smbclient.
+  Reported by Jesús Martel.
+
+* Removed BackupPC_compressPool and BackupPC::Xfer::BackupPCd.
+
+#------------------------------------------------------------------------
+# Version 3.1.0, 25 Nov 2007
+#------------------------------------------------------------------------
+
+* Fixed config editor bug for case where override is unchecked on
+  an array where the current array is shorter than the main config's
+  array.
+
+* Fixed missing close quote in BackupPC_archiveHost reported by Franky
+  Van Liedekerke.
+
+* Replaced "$BinDir/.." with $bpc->InstallDir() for path to BackupPC
+  docs, mentioned by Kenneth Porter.
+
+* Moved default of $Conf{IncrLevels} from lib/BackupPC/Storage/Text.pm
+  to lib/BackupPC/Lib.pm (after the merge of the config files).  This
+  fixes a bug that caused $Conf{IncrLevels} to get over-ridden if it
+  was only defined in the main config file. Reported by John Rouillard.
+
+* Fixed the completion status message in BackupPC_dump so that missing
+  error counts appear as 0, rather than empty.  Reported by Bill.
+
+* Changed lib/BackupPC/Xfer/RsyncFileIO.pm to only increment the error
+  count when the md4 checksum fails on the second phase, not the first.
+  Reported by Adrian Bridgett.
+
+* Updated a comment in config.pl about BackupPC_nightly, reported by
+  Dan Pritts.
+
+* Modified lib/BackupPC/CGI/Restore.pm to ensure that the list of hosts
+  presented for direct restore do have direct restore enabled.  Reported
+  by Stephen Joyce.
+
+* Modified lib/BackupPC/CGI/RestoreFile.pm to replace \n with \r\n in
+  the restore http response headers.  Patch submitted by Thomas Eckhardt.
+
+#------------------------------------------------------------------------
+# Version 3.1.0beta1, 21 Oct 2007
+#------------------------------------------------------------------------
+
+* When there is an existing partial, a new partials is only saved
+  if it has more files than the existing partial.  Requested by
+  Carl Soderstrom.
+
+* Fixed handling of $Conf{BackupFilesExclude} for tar XferMethod.
+  Patch supplied by Frans Pop.
+
+* Fixed numeric column sorting in host summary table, reported by
+  Michael Pellegrino.
+
+* Fixed host CGI editor so it creates the new host's config.pl file
+  using the lower-case host name, since host names are mapped to
+  lower case when they are read from the hosts file.  Reported by
+  Alexander Onic.
+
+* Applied documentation patches from Frans Pop.  Also updated
+  Pod::Html to improve documentation formatting.
+
+* Added Polish translation from Semper.
+
+* Fixed BackupPC_nightly reporting of repeated pool file hashes.
+
+* Add run-time check that IO::Dirent is functioning correctly,
+  reported by Doug Lytle.
+
+* Added comment to Cmd settings in conf/config.pl that they are
+  not executed by a shell, as suggested by Erik van Linstee.
+
+* Added undefIfEmpty => 1 to lib/BackupPC/Config/Meta.pm for
+  RsyncRestoreArgs, TarClientRestoreCmd and SmbClientRestoreCmd
+  so that restores can be disabled by clear these fields in the
+  CGI editor.  Patch supplied by Stephen Joyce
+
+* Replaced the FAQ link with Wiki in the navigation bar and added
+  mention of the Wiki to the documentation.  Since these navigation
+  bar links are specified in the config file, upgrades will keep
+  the old FAQ link.  The FAQ opening page will have a prominent
+  link to the Wiki.
+
+#------------------------------------------------------------------------
+# Version 3.1.0beta0, 3 Sep 2007
+#------------------------------------------------------------------------
+
+* Added new script BackupPC_archiveStart that allows command-line
+  starting of archives.  Based on script written by Sergey Kovzik,
+  which in turn was based on an earlier version by Holger Parplies.
+
+* Added Simplified Chinese CGI translation from Youlin Feng,
+  plus fixed a couple of cases where utf8 share names were
+  not displayed correctly.
+
+* Added sorting by column feature to host summary table in CGI
+  interface.  Implemented by Jeremy Tietsort.
+
+* Added optional support for IO::Dirent which allows inode information
+  to be extracted from the dirent directory structure.  This allows
+  BackupPC to order some directory operations by inode, which on
+  some file systems (eg: ext3) can results in a 20-30% performance
+  gain.  On other file systems there is no real improvement.  This
+  optimization is turned on automatically if IO::Dirent is installed.
+
+* Added some performance improvements to BackupPC::Xfer::RsyncFileIO
+  for the case of small files with cached checksums.
+
+* Added check to BackupPC at startup that $TopDir can support
+  hardlinks. Also added check to BackupPC_dump that a hardlink
+  below $TopDir/pc/HOST can be made to below $TopDir/cpool.
+  Also added the need for a hard-link capable file system to
+  the documentation.  Suggested by Nils Breunese.
+
+* Added FreeBSD init.d file provided by Gabriel Rossetti.
+
+* Added -l and -L options to BackupPC_tarCreate so that
+  provide a file list (without creating the archive).
+  Requested by Dirk.
+
+* Made the default charset for BackupPC_zipCreate cp1252, which
+  appears to work correctly with WinZip.  Unfortunately there is
+  no clear standard for charset encoding in zip files.
+
+* Added support so that pre-3.0 backups with non-utf8 charsets
+  can be viewed and restored correctly.  A new config variable
+  $Conf{ClientCharsetLegacy} specifies the charset used to
+  encode file names in legacy backups.  This is only relevant
+  if you are trying to view or restore a backup made with
+  BackupPC 2.x and some of the file names have non-ascii
+  characters.
+
+* Added setting of the environment variable BPC_REQUSER to
+  the requesting user name in BackupPC prior to fork(), so
+  each child process inherits the value.  Submitted by
+  Holger Parplies.
+
+* Fixed bug in rsync incrementals that happens on particular
+  file names when a file being backed up fails in both rsync
+  phases.  Reported by Dan Smisko.
+
+* Fixed single-restore file name charsets for IE, reported by
+  Francis Lessard.
+
+* Fixed makeDist so that the --config-dir option to configure.pl
+  works correctly.  Reported by Randy Barlow, Tony Shadwick and others.
+
+* Removed ConfDir from config editor (since it is hardcoded in
+  lib/BackupPC/Lib.pm).  Also made TopDir and LogDir only visible
+  if useFHS (for non-FHS they are hardcoded in lib/BackupPC/Lib.pm).
+
+* Applied patch from Holger Parplies that fixes cleanup of early abort
+  in BackupPC_dump.
+
+* Applied small patch from Sergey to lib/BackupPC/Xfer/Tar.pm that makes
+  it ignore "socket ignored" error on incrementals.
+
+* Applied small patch from Sergey to bin/BackupPC_archiveHost.
+
+* Changed BackupPC_sendEmail so that summary admin email doesn't
+  include errors from hosts that have $Conf{BackupsDisable} set.
+  Reported by James Kyle.  Also, per-user email is now disabled
+  when $Conf{BackupsDisable} is set.
+
+* Added RsyncdUserName to the config editor.  Reported by Vicent Roca Daniel.
+
+* $Conf{IncrLevels} is now defaulted if it is not defined.
+
+* configure.pl clears $Conf{ParPath} if it doesn't point to a valid
+  executable.
+
+* Added documentation for BackupPC_tarPCCopy, including use of -P option
+  to tar suggested by Daniel Berteaud.
+
+* Config editor now removes white space at start of exec path.
+  Reported by Christoph Iwasjuta.
+
+* CgiDateFormatMMDD == 2 gives a YYYY-MM-DD format for CGI dates,
+  suggested by Imre.
+
+#------------------------------------------------------------------------
+# Version 3.0.0, 28 Jan 2007
+#------------------------------------------------------------------------
+
+* BackupPC_sendEmail now correctly sends admin email if backups
+  were skipped because the disk was too full, reported by Dan
+  Pritts.
+
+* BackupPC_Admin now uses $Conf{UmaskMode}, so config.pl files
+  written by the editor have more restrictive permissions.
+  Reported by Tim Massey.
+
+* Host summary now shows active backups on disabled hosts,
+  from Jono Woodhouse.
+
+* Fixed host LOG link and LOG list order, reported by Tim Massey.
+
+* Moved Encode.pm version check to start of configure.pl so it
+  produces a useful error message if Encode.pm is too old.
+
+* Fixed hrefs to configuration documentation to handle changes
+  in the way perl generates the anchors.  Reported by Philip
+  Gleghorn.
+
+* Host name links in LOG files now allow "." in the host name.
+  Reported by Jean-Michel Beuken.
+
+* Fixes to lib/BackupPC/Xfer/Tar.pm for tar 1.16: allow 1
+  (ie: 256) as a successful exit status and match "Total
+  bytes read" message for restores.  First reported by
+  Torsten Sadowski and debugged by Ralf Gross and Holger
+  Parplies.
+
+#------------------------------------------------------------------------
+# Version 3.0.0beta3, 3 Dec 2006
+#------------------------------------------------------------------------
+
+* Removed default paths from conf/config.pl so configure.pl will
+  determine the correct ones at install time.  Avoids problem of
+  the config editor complaining about bad executable paths the
+  first time you use it.
+
+* Changed first byte of compressed files with rsync checksums appended
+  to 0xd7 to allow correct protocol_version >= 27 md4 checksums to be
+  written.  Old cached checksum files have a first byte 0xd6 and are
+  now considered to be uncached.  They will be automatically updated
+  as needed.  This avoids the cached checksum warnings in beta2.
+
+* BackupPC_tarPCCopy now handles all file types correctly.  Reported
+  by George Avrunin.
+
+* Fixed BackupPC_nightly to finish pending deletes before renaming
+  pool chains.
+
+* Fixes for rsync restore where hardlink is to file outside of the
+  top-level restore directory.  Reported by George Avrunin, who helped
+  with debugging.
+
+* Fixes for checksum mismatch on restore for certain file sizes.
+  Reported by George Avrunin and others.
+
+* Fix for config.pl writing code to handle multi-line expressions.
+  Reported by David Relson and others.
+
+* Fix for CGI editor when deleting hash entries whose keys are
+  non alphanumeric.  Report by David Relson and Aaron Ciarlotta.
+
+* Two fixes to configure.pl from Andreas Vögele.
+
+#------------------------------------------------------------------------
+# Version 3.0.0beta2, 18 Nov 2006
+#------------------------------------------------------------------------
+
+* Fix for final md4 digest check on rsync transfers >= 512MB when protocol
+  version >= 27 and checksums are not cached.  Reported by Garith Dugmore
+  and Dale Renton.
+
+* Config Editor "Save" button is now always visible, but greyed out
+  until there are changes to save.
+
+* Config editor allows other tabs to be selected when there is an
+  error, which allows you to fix an error (eg: missing binary) in
+  an exiting config file.  Errors are now displayed at the top of
+  the page in addition to next to the erroneous setting.
+
+* configure.pl checks version of Encode.pm.  Reported by Chris Stone.
+
+* Several fixes to bin/BackupPC_fixupBackupSummary from Stian Jordet.
+
+* Fixed config.pl editor writing to solve bug with multi-line text
+  strings ending in newline.  Reported and root caused by Les Stott
+  and Jerry Groendyke.
+
+* Fixed error recovery case in BackupPC::PoolWrite, reported by
+  Samuel Bancal.
+
+* Fixed table width in backup browsing to avoid Firefox layout anomoly,
+  provided by Jono Woodhouse.
+
+* CSS file updates from Jono Woodhouse.  Prior (v2) version is included
+  as BackupPC_stnd_orig.css in case people prefer the old skin.
+
+* More compact host summary, including disabled host indication,
+  from Jono Woodhouse.
+
+* New directory/file/hardlink and symlink image icons from Sean Cameron
+  and Jono Woodhouse, making directory browse more compact.
+
+* BackupPC.pid is now world readable, suggested by Casper Thomsen.
+
+* Reordered the Server navigation bar links, suggested by David Relson.
+
+* Fixed typos in init.d/src/gentoo-backuppc, configure.pl and config.pl
+  reported by David Relson.
+
+#------------------------------------------------------------------------
+# Version 3.0.0beta1, 30 Jul 2006
+#------------------------------------------------------------------------
+
+* Fixed several Xfer charset conversions.
+
+* Added some CGI utf8 conversions from Rodrigo Real and Vincent
+  Fleuranceau.
+
+* Rsync transfers now correctly handle file names with \n or \r.
+
+* Host name is forced to lower case, to match 2.x.
+
+* Fixed LOG file naming in BackupPC_restore and BackupPC_archive.
+
+* GFK applied fr.pm corrections from Nicolas Stransky.
+
+* Updated init.d/src scripts for FHS (ie: replaced __TOPDIR__/log
+  with __LOGDIR__ and __TOPDIR__/conf with __CONFDIR__).  Patch
+  provided by Rodrigo Real.
+
+* Added --log-dir and --conf-dir options to configure.pl.
+  Reported by Vincent Fleuranceau.
+
+* Updated File::RsyncP version check in configure.pl, reported
+  by Vincent Fleuranceau.  Changed File::RsyncP version to 0.64.
+
+#------------------------------------------------------------------------
+# Version 3.0.0beta0, 11 Jul 2006
+#------------------------------------------------------------------------
+
+* Added configuration and host CGI editor.
+
+* Added rsync hardlink support.  Requires latest version of
+  File::RsyncP (0.62).
+
+* Decoupled BackupPC_dump from BackupPC_nightly by making
+  asynchronous file linking/delete robust to race conditions.
+  Now only BackupPC_nightly and BackupPC_link are mutually
+  exclusive so only one runs at a time, and BackupPC_dump and
+  BackupPC_restore can run anytime.
+
+* Added support for multi-level incrementals.  In the style of dump(1),
+  the level of each incremental can be specified.  Each incremental
+  backups up everything since the most recent backup of a lower level
+  (fulls are always level 0).  Previous behavior was all incrementals
+  were level 1, meaning they backed up everything since the last full
+  (level 0).  Default configuration is all incrementals are level 1.
+
+* Server file names are now in utf8 and optional conversion
+  to/from client name charsets can be configured.  All CGI pages
+  now use the utf8 charset.
+
+* Backup metadata is now additionally saved to pc/HOST/nnn/backupInfo,
+  in addition to pc/HOST/backups.  In case pc/HOST/backups gets trashed,
+  then a new script BackupPC_fixupBackupSummary can read the per-backup
+  metadata from pc/HOST/nnn/backupInfo and reconstruct the backups file.
+  Roberto Moreno also pointed out an early error in the CVS version.
+
+* Added Storage module and Storage::Text which localizes all the
+  text data file reading/writing (eg: backups, restores, archives
+  and config.pl files).  Added read verify after all write
+  operations for robustness.  Additional backends (eg: SQL)
+  can be added in the future as new subclasses of the Storage
+  module.
+
+* Added Config module, and Config::Meta that contains meta data
+  about configuration parameters.
+
+* Added RSS support from Rich Duzenbury.
+
+* Translations of new 3.0 language strings from Guillaume Filion,
+  Reginaldo Ferreira, Ralph Passgang, Lieven Bridts, Guus Houtzager,
+  Rodrigo Real.
+
+* Added optional checking of exit status of Dump/Restore/Archive Pre/Post
+  UserCmd, requested by Kiko Jover, Matthias Bertschy and others.
+
+* For new installations configure.pl tries to comply with the file
+  system hierarchy standard, which means all the configuration files
+  below /etc/BackupPC and log files go below /var/log/BackupPC.
+
+* Added Slackware init.d script from Tony Nelson.
+
+* Fixed error reporting when restore/archive fail to write the
+  request file to the client directory.
+
+* Applied patch from Marc Prewitt for DumpPreShareCmd and DumpPostShareCmd.
+
+* Apply patch from Pete Wenzel to add smbClientPath => $Conf{SmbClientPath}
+  to DumpPreUserCmd etc.
+
+* Added Portuguese Brazillian pt_br.pm from Reginaldo Ferreira.
+
+* Jean-Michel Beuken reported several bugs in configure.pl in CVS 3.0.0.
+
+* Old backup email warnings now ignore partials requested by Samuel Bancal
+
+* Applied patch to bin/BackupPC_sendEmail from Marc Prewitt that
+  ignores any file starting with "." in the pc directory when
+  it is generating warnings about old/unused files/directories.
+
+* Applied patch from Marc Prewitt to fix host queue order.
+ 
+* Applied Lorenzo Cappelletti's it.pm patch.
+
+* Applied Wander Winkelhorst's nl.pm patch.
+
+* Applied Alberto Marconi's it.pm patch.
+
+* Add NT_STATUS_FILE_LOCK_CONFLICT to pst read error check in
+  BackupPC_sendEmail to fix bug reported by Dale Renton.
+
+* Added fixup of $ENV{REMOTE_USER} to lib/BackupPC/CGI/Lib.pm in the
+  case of using mod_authz_ldap; patch submitted by Alain Perrier.
+
+* Added env LC_ALL=C to $Conf{TarClientCmd} and $Conf{TarClientRestoreCmd}
+  to avoid locale problems, suggested by Ludovic Drolez.
+
+* Changed ping output parsing to pick out average rtt time, based
+  on patch from Ron Bickers.
+
+* Removed leading "./" and top-level "./" directory from
+  zip archives generated by BackupPC_zipCreate.  Reported
+  by Josh (hecktarzuli).
+
+* BackupPC_tarCreate and BackupPC_zipCreate now allow "@"
+  in share names.  Reported by Robert Waldner.
+
+* NT_STATUS_INSUFF_SERVER_RESOURCES is now a fatal error for
+  smbclient transfers, suggested by Brian Shand.
+
+* Changed bin/BackupPC_archiveHost to use /bin/csh instead of
+  /bin/sh.  That way any errors in the pipeline are reported
+  via the exit status, instead of just the last.
+
+* Added $Conf{EMailHeaders} for additional email headers, requested
+  by Ludovic Gasc.  If the Content-Type charset is set to utf8 then
+  the body of the email is sent in utf8 coding.
+
+* Made shareName argument regexp checking more general to allow parens.
+
+* Added some debian init.d instructions to init.d/README from
+  Bob de Wildt.
+
+* Documentation updates from Richard Ames, JP Vossen, Torsten Finke.
+
+#------------------------------------------------------------------------
+# Version 2.1.2pl2, 18 Jun 2006
+#------------------------------------------------------------------------
+
+* In conf/config.pl, changed --devices to -D in $Conf{RsyncArgs}
+  and $Conf{RsyncRestoreArgs} to fix "fileListReceive failed" and
+  "Can't open .../f%2f for empty output" errors with rsync 2.6.7+.
+  Fix proposed by Justin Pessa and Vincent Ho, and confirmed by
+  Dan Niles.
+
+* Added patch from Michael (mna.news) to ignore "file is unchanged"
+  message from tar 1.15.x during incremental backups.
+
+* Fixed creation of .rsrc directories in bin/BackupPC_tarExtract
+  when used with xtar on MacOS.  Reported by Samuel Bancal and
+  Matthew Radey, who helped with debugging.
+
+* Fixed bug in BackupPC_tarExtract for files >8GB in size whose
+  lengths are multiples of 256.  Reported by Jamie Myers and
+  Marko Tukiainen, who both helped debugging the problem.
+
+* Fixed bug in lib/BackupPC/Xfer/RsyncFileIO.pm that caused
+  incorrectly deleted attributes to be set in directories
+  where one of the files had an rsync phase 1 retry during
+  an incremental.  Reported by Tony Nelson.
+
+#------------------------------------------------------------------------
+# Version 2.1.2, 5 Sep 2005
+#------------------------------------------------------------------------
+
+* Fixed simple but serious bug in bin/BackupPC_tarCreate that prevented
+  hardlinks being saved correctly.  Debugged by Michael (mna.news)
+  with several other people.
+
+* Fixed serious bug in bin/BackupPC_dump reported/debugged by Dan Niles
+  that can happen when multiple full backups are deleted after
+  $Conf{FullKeepCnt} is changed.
+
+* Changed lib/BackupPC/CGI/Lib.pm so that link to "$TopDir/conf/$host.pl"
+  is displayed if it exists.  Patch from Andreas Vögele.
+
+* Applied daemonize patch to bin/BackupPC from:
+        http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=301057
+
+* It's now a fatal error if $Conf{CompressLevel} is set, but
+  Compress::Zlib is not found.  Before $Conf{CompressLevel} was
+  silently set to 0, which made all the backups uncompressed.
+  That meant the user never knew if they forget to install
+  Compress::Zlib but were expecting compression to be on.
+
+* Finally increased $Conf{ClientTimeout} to 72000 (20 hours).
+
+* Added sleep 1 in restart() function in init.d/src/gentoo-backuppc,
+  suggested by Jon Hood.
+
+* Added $DestDir to the path of the CGI image directory in configure.pl.
+  Patch submitted by Andreas Vögele.
+
+* Applied extensive patch to French translation from Frederic Lehobey.
+
+* Minor change to Dutch language $Lang{Pool_Stat} from Wander Winkelhorst.
+
+* Minor change to French language $Lang{EMailOutlookBackupMesg} and
+  $Lang{EMailOutlookBackupSubj} from Ludovic Gasc.
+
+#------------------------------------------------------------------------
+# Version 2.1.1, 13 Mar 2005
+#------------------------------------------------------------------------
+
+ * Fixed bug in top-level restore using rsync XferMethod.
+   BackupPC::View was leaving an extra leading "/" at the start
+   of top-level directories, messing up the FileList sort order.
+   Reported and debugged by Gail Edwards.
+
+ * Added pathCreate() to BackupPC_tarExtract so that new directories
+   are created.  Required for xtar on MacOSX since the virtual resource
+   fork directories (.rsrc) are not explicitly included in the tar
+   archive - just the files below .rsrc are.
+
+ * Changed $host.$bkupNum.tar$fileExt.* to $host.$bkupNum.tar$fileExt*
+   in $parCmd in bin/BackupPC_archiveHost.
+
+ * Fixed HostSortCompare() in BackupPC to correctly sort hosts so
+   those with the oldest backups get queued first.
+
+ * Changed test in BackupPC_sendEmail so that directories/files
+   starting with "." in $TopDir/pc are ignored, rather than
+   just "." and "..".
+
+ * Changed BackupPC_sendEmail to include NT_STATUS_FILE_LOCK_CONFLICT
+   in check for bad outlook files.
+
+ * Ensure that %Status and %StatusHost are empty if requesting
+   status on hosts in lib/BackupPC/CGI/Lib.pm GetStatusInfo().
+   Fixes problem with new hosts under mod_perl.
+
+ * Added images/icon-hardlink.gif so that hardlinks show file type icon.
+
+#------------------------------------------------------------------------
+# Version 2.1.0pl1, 15 Aug 2004
+#------------------------------------------------------------------------
+
+* Added fix to nl.pm from Lieven Bridts.
+
+* Added patch from Tony Nelson to remove $Info{pid} before BackupPC
+  writes the status and shuts down.
+
+* Changed BackupPC_nightly so that it doesn't call find() if the
+  directory doesn't exist.  This avoids errors in certain versions
+  of perl.  Reported by Bernd Rilling.
+
+* Fixed BackupPC::CGI::Lib to correctly re-load config.pl for mod_perl.
+  Reported by Tony Nelson and Jimmy Liang.
+
+* Explicitly untaint $In{host} in BackupPC::CGI::Lib to fix problem
+  reported by Thomas Tempé.
+
+* Added newline to "...skipping because of user requested delay..."
+  log message in BackupPC_dump.  Reported by Wayne Scott.
+
+* Added read file size error checking to BackupPC_tarCreate.
+  Reported by Brandon Evans.
+
+* Added check in BackupPC::Xfer::RsyncFileIO to ensure that when
+  compression is toggled on/off, a compressed backup doesn't link
+  to an uncompressed pool file (and an uncompressed backup doesn't
+  link to a compressed pool file).  Reported by Brandon Evans.
+
+* Updated documentation with new dirvish URL and a typo from
+  Todd Curry.
+
+* Fix to BackupPC_sendEmail so that it correctly sends admin emails
+  for hosts that have failed backups.  Reported by Simon Kuhn.
+
+#------------------------------------------------------------------------
+# Version 2.1.0, 20 Jun 2004
+#------------------------------------------------------------------------
+
+* Added Dutch translation from Lieven Bridts, with tweaks from
+  Guus Houtzager.
+
+* Added PC-specific config file read in CGI/Archive.pm.  Patch
+  from Pete Wenzel.
+
+* Added non-zero exit code to BackupPC_zcat when uncompress fails.
+  Patch from Pete Wenzel.
+
+* Cosmetic changes to PC Summary and Log file language strings from
+  Pete Wenzel.
+
+* BackupPC::Lib tries to be more careful when renaming the backups
+  file to backups.old.  There have been reports of backups being
+  empty, perhaps when the BackupPC data file system fills up.
+  Now backups is not renamed to backups.old if backups is empty.
+
+* BackupPC now closes stderr and stdout before renaming and
+  re-opening the log file.
+
+* Pre/post backup/restore/archive commands now correctly set
+  "type" to either incr/full/restore/archive, and now cmdType
+  is the type of Pre/post backup/restore/archive command.
+
+* BackupPC_archive correctly terminates archive processes on
+  alarm or cancel.
+
+* Updates to BackupPC_stnd.css with absolute font sizes instead
+  of relative.
+
+* BackupPC_dump now makes sure that the $Conf{FullAgeMax} check
+  also ensures the full backup is older than the maximum age
+  expected from $Conf{FullPeriod}.
+
+#------------------------------------------------------------------------
+# Version 2.1.0beta2pl1, 30 May 2004
+#------------------------------------------------------------------------
+
+* Fixed bug in rsync checksum caching code in BackupPC::Xfer::RsyncDigest.
+
+* BackupPC_zipCreate now ensures the earliest mtime is 1/1/1980,
+  since zip file formats don't support earlier dates.  Reported
+  by Dan Niles.
+
+* CGI restore via zip and tar now makes sure stderr is ignored
+  when BackupPC_tarCreate and BackupPC_zipCreate are run.
+  Previously any stderr output would get mixed in the archive,
+  corrupting it.  Reported by Dan Niles.
+
+#------------------------------------------------------------------------
+# Version 2.1.0beta2, 23 May 2004
+#------------------------------------------------------------------------
+
+* $Conf{BackupFilesOnly} and $Conf{BackupFilesExclude} now apply
+  to every share, rather than just the first, in the case where
+  they are arrays and there are multiple shares.  Suggested
+  by Andy Evans.
+
+* On the phase 2 retry pass with rsync, verify the cached checksums
+  if checksum caching is turned on.  This will catch the case of
+  cached checksums being incorrectly appended to the compressed
+  pool file.  Added new config parameter $Conf{RsyncCsumCacheVerifyProb}
+  so that cached checksums are verified with a selectable probability.
+  Also, increased File::RsyncP version number to 0.51.
+
+* configure.pl now supports an optional batch mode.  Command-line
+  options are used to specify all the information that configure.pl
+  needs.  This is useful for building auto-install packages.
+  Also, configure.pl now includes pod documentation, so you can do
+  "perldoc configure.pl" to see all the command-line options.
+  Suggested, tested and tweaked by Stuart Herbert for possible
+  Gentoo inclusion.
+
+* At each wakeup, clients are now queued based on how old the most
+  recent backup is.  Clients with errors are queued first, with
+  the oldest error times going first.  The rest of the clients are
+  queued next, with the clients with the oldest backup going first.
+  Previously the clients were simply queued in alphabetic order.
+  Suggested by Mike Trisko and Tony Nelson.
+
+* Added config parameter $Conf{PartialAgeMax} that controls whether
+  partials are saved at all, and if so, whether the partial will be
+  ignored at the next full backup if it is too old.
+
+* BackupPC_tarExtract now allows empty archives without reporting
+  an error.  Reported by Don Silvia.
+
+* Removed Browse Backups link from Nav Bar in Archive Info display.
+  Reported by Ralph Paßgang.
+
+* Fixed documentation display for regular users.  Reported by Ralph Paßgang.
+
+* Status and PC Summary now work for regular users and only show
+  that user's hosts.  Server general status information only appears
+  for admins.  Suggested by Ralph Paßgang.
+
+* Moved the last three navigation-bar links (docs, FAQ and SF) to
+  a new config parameter $Conf{CgiNavBarLinks}.  This allows
+  these links to be locally configured.  Based on a patch
+  submitted by Ralph Paßgang.
+
+* Allow the navigation bar search box to be disabled by
+  setting $Conf{CgiSearchBoxEnable} to 0.  Based on a patch
+  submitted by Ralph Paßgang.
+
+* Updates to de.pm from Ralph Paßgang.
+
+* Made the BackupPC icon a link to the SF BackupPC project page.
+
+#------------------------------------------------------------------------
+# Version 2.1.0beta1, 4 Apr 2004
+#------------------------------------------------------------------------
+
+* The CSS definition has been removed from the config.pl file and
+  is now a separate file, BackupPC_stnd.css.  A new config variable,
+  $Conf{CgiCSSFile}, gives the name of the CSS file to use.
+  Suggested by Ender Mathias.
+
+* Fixed the filling of the host name select box for admins.
+  The default $Conf{CgiNavBarAdminAllHosts} is now 1.
+  Reported by Doug Lytle.
+
+* Cleaned up warning message for restore using rsync when checksum
+  caching is on, but when file didn't have cached checksums.
+
+* Fixed BackupPC_archiveHost to support par2 (par2cmdline).
+  Patch submitted by Jaco Bongers and adapted by Josh Marshall.
+
+* Improved stat() usage in BackupPC_nightly, plus some other cleanup,
+  giving a significant performance improvement.  Patch submitted by
+  Wayne Scott.
+
+* Allow several BackupPC_nightly processes to run in parallel based
+  on new $Conf{BackupPCNightlyJobs} setting.  This speeds up the
+  traversal of the pool, reducing the overall run time for
+  BackupPC_nightly.
+
+* Allow BackupPC_nightly to split the pool traversal across several
+  nightly runs.  This improves the running time per night, at the expense
+  of a slight increase in disk storage as unused pool files might not
+  be deleted for a couple of days.  Controller by new config setting
+  $Conf{BackupPCNightlyPeriod}.
+
+#------------------------------------------------------------------------
+# Version 2.1.0beta0, 20 Mar 2004
+#------------------------------------------------------------------------
+
+* A failed full dump is now saved as a partial (incomplete) dump,
+  provided it includes some files.  This can be used for browsing,
+  restoring etc, and will also form the basis of resuming full
+  dumps.  Only one partial is kept, and it is removed as soon
+  as a successful full (or a new partial) is done.
+
+* Added support for resuming a full dump for rsync.  The partial
+  full is kept, and to resume an incremental is done against the
+  partial, and a full is done for the rest.
+
+* Added support for Rsync checksum caching.  Rsync checksum are
+  appended to the compressed pool files.  This means that block
+  and file checksums do not need to be recomputed on the server
+  when using rsync.  Requires a patch to rsync to support fixed
+  checksum seeds.  This patch is included in the cygwin-rsyncd
+  release on http://backuppc.sourceforge.net.
+
+* Major addition of Archive feature from Josh Marshall.  Special
+  clients can be configured to be archive targets (eg: tape drives,
+  CD-R).  Any subset of the backup clients can be selected and tar
+  archives are created, optionally compressed and split and written
+  to the output device.  Logs are maintained and are browsable.
+
+* Major changes from Ryan Kucera to add style sheets to the CGI
+  interface, allowing easy customization.  Added new icons and
+  BackupPC logo.  Numerous navigation improvements.
+
+* Added directory history display to BackupPC_Admin, allowing the
+  user to quickly see which files changed between backups on a
+  per-directory basis.
+
+* Added exponential expiry option for full dumps.  This allows you
+  to specify
+  
+   - how many fulls to keep at intervals of $Conf{FullPeriod}, followed by
+   - how many fulls to keep at intervals of 2 * $Conf{FullPeriod},
+   - how many fulls to keep at intervals of 4 * $Conf{FullPeriod},
+   - how many fulls to keep at intervals of 8 * $Conf{FullPeriod},
+   - how many fulls to keep at intervals of 16 * $Conf{FullPeriod},
+
+  and so on.  This allows you, for example, to keep 4 weekly fulls,
+  followed by 6 fulls every 4 weeks (approx 1 month) and 2 fulls at
+  16 weeks, for roughly 1 year of history.  This works by deleting
+  every other full as each expiry boundary is crossed.  Suggested
+  by David Cramblett.
+
+* Added Italian language translation it.pm from Lorenzo Cappelletti.
+
+* Major updates to language files for new features and tags changes.
+  Updated makeDist to do pedantic consistency checking of language
+  files.
+
+* Addition of administration options from Paul Lukins.  Initial
+  page allows server to be started/stopped/reloaded.  This still
+  needs some i18n work.  Currently the server start/stop is
+  commented out.
+
+* Split BackupPC_Admin into a set of modules, one for each major action.
+  Each action is now a seperate module in lib/BackupPC/CGI.
+
+* Allow the blackout period begin/end to span midnight.  Adapted
+  from patch submitted by David Smith.
+
+* Allow multiple blackout periods, with new config variable
+  $Conf{BlackoutPeriods} that replaces the old variables
+  $Conf{BlackoutHourBegin}, $Conf{BlackoutHourEnd}, and
+  $Conf{BlackoutWeekDays}.  Based on patch submitted by
+  Lorenzo Cappelletti.
+
+* Disabled alarms after forks to avoid timeouts in children that
+  do not reset their alarm.  Prompted by ideas from James Leu.
+
+* Added options for block size, buffer size and share wild-card to
+  BackupPC_tarCreate.  Also added negative backup number options
+  that are relative to the last (so -1 is the last), suggested by
+  William McKee and Carl Soderstrom.
+
+* The "Wrong user" message in BackupPC::Lib now goes to stderr, so that
+  the user is more likely to see the error with BackupPC_tarCreate.
+  Reported by Paul Fox.
+
+* Add creation of per-PC directory in BackupPC/CGI/Restore.pm in
+  case it doesn't already exist.
+
+* Added -q -x to all ssh commands in conf/config.pl.  Suggested by
+  SI Reasoning and Niranjan Ghate.
+
+* Changed restore code so that option #1 (direct restore) can be
+  disabled if the restore command is undefined.  Disabling direct
+  restore is necessary if the share is read-only.  Suggested by
+  Rich B from SAIC.
+
+* Changed regexp in lib/BackupPC/Smb.pm to allow numbers with both
+  a decimal point or comma for international versions of Samba.
+  Patch submitted by Frank Gard.
+
+* Browsing and directory history now sort the files in a
+  case-insensitive manner.
+
+* Changed exec() syntax to allow executing commands whose path
+  contains spaces.
+
+* BackupPC_dump no longer removes backups if $Conf{FullKeepCnt}
+  is zero or undefined.  The protects the existing backups in the
+  case of a bad config.pl file.  Suggested by Christian Warden.
+
+* Swapped the Server and Hosts sections on the Nav bar.  Moved the
+  host search text box to the top of the hosts section.  This was
+  done to move the variable-length part of the Nav bar (when all
+  hosts are displayed) to the bottom.
+
+* Fixed a bug in tar restore related to how the common prefix path is
+  removed.  Now ensure that the common path is at a directory boundary.
+  Reported by Patrick Neuner.
+
+* Added --chuid ${USER} to init.d/src/gentoo-backuppc.  Suggested by
+  SI Reasoning, Pascal Pochol, Michael Evanoff and others.
+
+* Added Suse notes to init.d/README from Bruno Vernay.
+
+* Added Apache 2 documentation fix from Michael Tuzi.
+
+#------------------------------------------------------------------------
+# Version 2.0.2, 6 Oct 2003
+#------------------------------------------------------------------------
+
+* Fixed stupid last-minute change in octal size conversion in
+  Backup_tarExtract.
+
+#-----------------------------------------------------------------------
+# Version 2.0.1, 5 Oct 2003
+#------------------------------------------------------------------------
+
+* Fixed handling of >= 8GB files in BackupPC_tarExtract and >= 4GB
+  files in BackupPC_tarCreate.
+
+* Removed smbclient size repair in BackupPC_tarExtract for files
+  between 2GB and 4GB.  This means that BackupPC_tarExtract 2.0.1
+  doesn't behave the same as 2.0.0 for file sizes between 2GB and 4GB
+  extacted using smbclient 2.2.x.  If you have problems backing up
+  files whose size is between 2GB and 4GB using smbclient 2.2.x
+  you should upgrade smbclient to 3.0, since it now generates
+  correct file sizes.
+
+* Replace PingClientPath with PingPath in configure.pl.
+
+* Removed -T (taint mode) on binaries installed in configure.pl.
+
+* Added support for smbclient from samba version 3.0.0.
+
+* Fixed $Conf{HardLinkMax} limit check in BackupPC::Lib; reported
+  by Ross Skaliotis.
+
+* In BackupPC_Admin, default REMOTE_USER to $Conf{BackupPCUser}
+  if it is not defined.  This allows the CGI interface to work
+  when AdminUsers = '*'.  Reported by Quentin Arce.
+
+* For SMB, code that detected files with a read-locked region (eg:
+  outlook .pst files), removed them and then tried to link with an
+  earlier version was broken.  This code missed a step of mangling
+  the file names.  This is now fixed.  Reported by Pierre Bourgin.
+
+* A backup of a share that has zero files is now considered
+  fatal. This is used to catch miscellaneous Xfer errors that
+  result in no files being backed up.  A new config parameter
+  $Conf{BackupZeroFilesIsFatal} (defaults to 1) and can be set to
+  zero to turn off this check.  Suggested by Guillaume Filion.
+  Additional change: this check only applies to a full dump.
+
+* SMB: now detect NT_STATUS_ACCESS_DENIED on entire share or BackupFilesOnly
+  (also ERRDOS - ERRnoaccess (Access denied.) for older versions of
+  smbclient.)  Suggested by Guillaume Filion.
+
+* SMB: now detects "tree connect failed: NT_STATUS_BAD_NETWORK_NAME" and
+  the dump is considered failed.
+
+* Rsync: Previously BackupFilesOnly = '/' did --include '/' --exclude '/*',
+  which just included the '/' directory and nothing below.  Now it
+  does just --include '/', which should include everything.
+  Reported by denon.
+
+* Add hostError to DumpPostUserCmd variable substitutions for both dump
+  and restore.
+
+* Verbose output in Lib.pm goes to STDERR, not STDOUT.  This now
+  makes BackupPC_dump -v work better.
+
+* Don't allow browsing with ".." in directory in case a user tries
+  to trick BackupPC_Admin into displaying directories outside where
+  they are allowed.
+
+* Required File::RsyncP version is now 0.44, since File::RsyncP 0.44
+  fixes large file (>2GB) bugs.  Large file bugs reported by Steve
+  Waltner.
+
+#------------------------------------------------------------------------
+# Version 2.0.0, 14 Jun 2003
+#------------------------------------------------------------------------
+
+* Minor tweaks to disable utf8 on utf8-capable machines (eg: RH8+).
+  Added "no utf8" to all programs, and added binmode() to relevant
+  file handles.
+
+#------------------------------------------------------------------------
+# Version 2.0.0beta3, 1 Jun 2003
+#------------------------------------------------------------------------
+
+* Several improvements to restore: cancel now reports the correct
+  message and cleans up correctly.
+
+* Rsync with whitespace and wildcard excludes fixed by replacing
+  argList with argList+ in config.pl plus a fix to Lib.pm for
+  shell escaping array arguments.
+
+* Fixed rsync restore for character and block special devices
+  (major and minor device numbers weren't correctly restored).
+
+* Fixed typo in bin/BackupPC_restore (XferLOG -> RestoreLOG).
+
+* (Re)-fixed "Bad command" in log file when restore via tar or zip
+  file download is done.
+
+* Added untaint to exec in Lib.pm to avoid tainted errors.
+
+* Applied additional tweak to hilight patch from Tim Demarest.
+
+* $Conf{CgiAdminUsers} = '*' now allows privileged even with REMOTE_USER
+  not set.
+
+* Don't display RsyncdPasswd when displaying config.pl files.
+
+* Replace pipe with socketpair in bin/BackupPC_dump and bin/BackupPC_restore,
+  which increases typical buffering from 4K to 16K-64K.  This improves the
+  performance.
+
+* Add check on $ENV{LANG} setting do configure.pl: if LANG includes utf
+  then a warning is printed.
+
+#------------------------------------------------------------------------
+# Version 2.0.0beta2, 11 May 2003
+#------------------------------------------------------------------------
+
+* Added German translation, provided by Manfred Herrmann.
+
+* Fixed large-file problem with rsync, reported by Manfred Herrmann.
+
+* Fixed zip and tar file download from CGI under mod_perl.  Reported
+  by Pierre Bourgin and Paul Lukins.
+
+* Fixed directory browsing and top-level directory browsing in 2.0.0beta0.
+  Reported by several users.
+
+* Added -v option to BackupPC_dump for verbose output (useful when
+  you run the command manually).  Added messages for all exits.
+
+* If nmblookup returns multiple IP addresses, NetBiosHostIPFind()
+  now returns the first IP address that matches the subnet mask.
+  Suggested by Tim Demarest.
+
+* Fixed BackupPC::View so the top-level directory is handled correctly.
+  This allows the top-level share/directory to be restored via the
+  CGI interface.  Reported by several users.
+
+* Fixed RsyncFileIO failures on certain large files by replacing seek()
+  with sysseek().  Reported by Manfred Herrmann.
+
+* Added configurable highlighting of PC status in the CGI summary
+  screen; submitted by Tim Demarest.
+
+* Fixed command queue CGI display; submitted by Tim Demarest.
+
+* BackupPC_trashClean now logs an error if it can't remove all the
+  trash and then goes back to sleep, rather than continually trying.
+
+* Moved correct user (uid) check into BackupPC::Lib so that all
+  applications do a user check if $Cong{BackupPCUserVerify} is
+  set.  The avoids the risk of manually running BackupPC_dump as
+  the wrong user.
+
+* Loss of blackout now applies to "host not found" as well as no ping.
+  Reported by Dale Renton.
+
+* "Host not found" is now treated in a similar manner to "no ping".
+
+* Added suse-linux init.d script from Leon Letto.
+
+* Added Gentoo linux init.d script from Tim Demarest.
+
+* Applied additional i18n strings from GFK and the translation team.
+
+* Fixed option parsing so that getopts errors are reported and we exit.
+
+* Changed reporting of Xfer PIDs so that rsync cancel works correctly.
+
+#------------------------------------------------------------------------
+# Version 2.0.0beta1, 30 Mar 2003
+#------------------------------------------------------------------------
+
+* Added Spanish translation es.pm from Javier Gonzalez.
+
+* Fixed CGI browse navigation bug that causes BackupPC_Admin to wedge
+  when directories were selected in a certain order.
+
+* Fixed BackupPC::PoolWrite so that it can recover when the initial
+  file size is wrong.  This is needed since rsync could write a file
+  whose size is different from the initial size returned in the
+  file list when that file is updated while rsync is running.
+
+* Added binmode(STDIN) to BackupPC_tarExtract, suggested by Pat LoPresti
+  to fix a problem a RedHat8 with perl 5.8.0.  It's unclear why this
+  helps, but it should be benign.  See:
+    http://sourceforge.net/mailarchive/forum.php?thread_id=1853018&forum_id=503
+
+#------------------------------------------------------------------------
+# Version 2.0.0beta0, 23 Feb 2003
+#------------------------------------------------------------------------
+
+* Support for rsync and rsyncd backup and restore.  Changes to
+  BackupPC_dump, BackupPC_restore, and new modules BackupPC::Xfer::Rsync
+  and BackupPC::Xfer::RsyncFileIO.
+
+* Added internationalization (i18n) code from Xavier Nicollet,
+  with additions from Guillaume Filion.  Voila!  BackupPC_Admin
+  now supports English and French, and adding more languages is
+  now easy.  New config paramater $Conf{Language} sets the language.
+
+* Added optional user-defined pre/post dump/restore commands, allowing
+  things like database shutdown/startup for dumps.
+
+* Changed the way hosts are found.
+
+* Added $Conf{ClientNameAlias}, which allows the name of the physical
+  client machine to be set.  This allows several different backup
+  "hosts" to all refer to the same physical machine, which is
+  convenient if several different types of data need to be backed
+  up, or if different parameters are needed for different parts of
+  the host.
+
+* Replaced $Conf{PingArgs} with $Conf{PingCmd}, added $Conf{DfCmd},
+  $Conf{NmbLookupCmd} allowing all these commands to be fully
+  configured.  Also, all commands can also now be fragments of
+  perl code.
+
+* Moved all smbclient commands into the config.pl file so the specific
+  arguments can be customized.  New config parameters are
+  $Conf{SmbClientFullCmd}, $Conf{SmbClientIncrCmd} and
+  $Conf{SmbClientRestoreCmd}.
+
+* Added new BackupPC::View module that creates views of backups
+  (handling merging etc).  Updated BackupPC_Admin, BackupPC_zipCreate
+  and BackupPC_tarCreate to use BackupPC::View.  This removes lots
+  of merging and mangling code from the higher-level code.
+
+* Added code from Toby Johnson that allows additional users to be
+  specified in the hosts file; these users can also view/start/stop
+  and restore backups for that host.  Also added a new config
+  setting $Conf{CgiNavBarAdminAllHosts} that allows all hosts to
+  be listed in the left nav bar for admins.
+
+* Added $Conf{HardLinkMax} (default 31999) which sets the limit on
+  the maximum number of hardlinks per file in the pool.  If a file
+  ever gets to this number of links a new pool file is created to
+  handle additional links.
+
+* Added $Conf{PerlModuleLoad}, which allows optional additional perl
+  modules to be loaded.
+
+* Added $Conf{EMailUserDestDomain} and other EMail config settings to
+  allow language-specific default messages to be overridden.
+
+* Added BPC_FTYPE_DELETED to lib/BackupPC/Attrib.pm, allowing deleted
+  files to be represented in the attrib file correctly.
+
+* Added support for environment variable BPC_SMB_PASSWD, which is the
+  client's smb password.  This overrides the old environment variable
+  PASSWD.
+
+* Added taint cleanup for perl5.8 to lib/BackupPC/Lib.pm.
+
+* Changed $tar_unpack_header format in BackupPC_tarExtract to correctly
+  handle files with trailing spaces.
+
+* Added catching of SIG_PIPE to BackupPC_dump, and changed catch_signal
+  to ignore multiple signals of the same type.
+
+* Added reporting of the largest number of hardlinks in the pool to the
+  log file.
+
+* Adding reporting of syntax errors in the per-PC config.pl file.
+
+* Updated BackupPC_sendEmail to handle language-specific email messages.
+
+* Allow client (host) names to contain spaces.  Spaces in host names
+  need to be escaped via "\" in the hosts file.  The user of spaces in
+  host names is discouraged, but they should work.  One feature that
+  doesn't work with host names that contain spaces is the highlighting
+  of that name in the log file display in the CGI interface.  There are
+  no plans to fix this.
+
+* Renamed $Conf{SmbClientTimeout} to $Conf{ClientTimeout}.
+
+* Fixed all open() calls to use 3 argument form to fix handling of file
+  names with trailing whitespace.  Also fixed CGI interface so these
+  file names are displayed correctly.
+
+* Fixed new 2.0.0 CGI navigation bug that causes the top-level directory
+  to have a URL "&share=//boot&dir=" instead of "&share=/boot&dir=/".
+  Reported by Pascal Schelcher.  Fixed similar problem reported by
+  Doug Lytle.
+
+* Added "PerlTaintCheck On" to the mod_perl section in the docs,
+  suggested by Tim Demarest.
+
+#------------------------------------------------------------------------
+# Version 1.5.0, 2 Aug 2002
+#------------------------------------------------------------------------
+
+* Changed conf/config.pl so that $Conf{TarIncrArgs} uses the --newer
+  option instead of --newer-mtime.  Also removed --atime-preserve from
+  $Conf{TarClientCmd}.  This makes the default settings work better
+  with tripwire.
+
+* Fixed configure.pl so it correctly detects a running BackupPC <= v1.4.0
+  so it can correctly warn the user to stop it before upgrading.  Reported
+  by David Holland.
+
+* Added missing ";" to entity escape in EscapeHTML in BackupPC_Admin.
+  Reported by Guillaume Filion.
+
+* Added LDAP setup to documentation from David Holland.
+
+* Tar.pm now adds a "." to file paths that start with "/", so that all
+  tar paths are relative.  From Ludovic Drolez.
+
+#------------------------------------------------------------------------
+# Version 1.5.0beta0, 30 Jun 2002
+#------------------------------------------------------------------------
+
+* A full set of restore options is now supported, including direct
+  restore via smbclient or tar or downloading a zip or tar file.
+
+* Major additions to CGI script to support better directory navigation,
+  restore features and mod_perl.  Also, file downloads from the CGI
+  interface now correctly preserve the file name and provide the
+  correct Content-Type for the most common types of files.  Improved
+  directory navigation was contributed by Ryan Kucera.
+
+* New script BackupPC_zipCreate (contributed by Guillaume Filion) is the
+  zip analog of BackupPC_tarCreate.  BackupPC_zipCreate can be used to
+  create a zip archive of any portion of a backup.
+
+* Substantial additions to BackupPC_tarCreate to support restore,
+  including modifying path names, handling hardlinks, fixing
+  support of old backups without attributes (pre-v1.4.0).  Plus
+  BackupPC_tarCreate is now an offical part of the release.
+  (Lack of support for hardlinks was reported by John Stanley.)
+
+* BackupPC_tarExtract now supports hardlinks and fixed pooling of
+  attribute files.
+
+* A unix domain socket is now used for communication between the CGI
+  interface and BackupPC.  The original TCP socket is optional.  Sockets
+  are correctly re-initialized if config.pl is updated with new socket
+  settings.
+
+* For improved security messages over the unix or TCP socket are protected
+  via an MD5 digest based on a shared secret, a sequence number, a time
+  stamp and a unique per-connection number.
+
+* Additions to configure.pl to support install of directory navigation
+  images.
+
+* Fixed case where $Conf{BackupFilesOnly} or $Conf{BackupFilesExclude}
+  were set to a single string or list (in v1.4.0 only the case of
+  hash worked correctly).  Reported by Phillip Bertolus.
+
+* Fixed case of $Conf{BackoutGoodCnt} == 0.  This setting now makes the
+  client always subject to blackout, matching the comments in config.pl.
+  Also fixed handling of $Conf{BackoutGoodCnt} < 0 in the CGI script
+  reported by Pascal Schelcher.
+
+* Fixed byte and file totals for tar backups, reported by several users.
+
+* Fixed --newer-mtime date/timestamp format to make it ISO 8601 compliant,
+  suggested by Erminio Baranzini.
+
+* Fixed handling of $Conf{BackupFilesOnly} in BackupPC::Xfer::Tar.pm, as
+  well as shell escaping of tar arguments.
+
+* Fixed entity encoding of 8-bit characters in the CGI interface.
+
+* Added optional CGI headers in $Conf{CgiHeaders} that by default
+  is set to a no-cache pragma.  Suggested by Benno Zuure.
+
+#------------------------------------------------------------------------
+# Version 1.4.0, 16 Mar 2002
+#------------------------------------------------------------------------
+
+* BackupPC now supports tar (in addition to smb) for extracting host	
+  data.  This is the most convenient option for linux/unix hosts.
+  Tar can be configured to run over ssh, rsh or to backup a local
+  nfs mount from the host.
+
+* Support for special files, including symbolic links, fifo, character
+  and block device files has been added, so that all native linux/unix
+  file types can be correctly backed up when using tar transport.
+  Special files are all stored as regular files and the type attributes
+  are used to remember the original file type.
+
+* All unix file attributes are now saved (and pooled when possible).
+  This includes user and group ownership, permissions, and modification
+  time.  Smbclient also does a reasonable job of emulating unix 
+  permissions (such as mtime), and these attributes get saved too.
+
+* The new default is to not fill incremental dumps.  configure.pl
+  automatically sets $Conf{IncrFill} to 0.  The default was 1
+  (incrementals were filled with hardlinks).  Since the CGI
+  script does filling at browsing time, there is no need to
+  fill incremental dumps.
+
+* Backup file names are now stored in "mangled" form. Each node of a
+  path is preceded by "f", and special characters (\n, \r, % and /) are
+  URI-encoded as "%xx", where xx is the ascii character's hex value. So
+  c:/craig/example.txt is now stored as fc/fcraig/fexample.txt. This
+  was done mainly so meta-data could be stored alongside the backup
+  files without name collisions.  In particular, the attributes for the
+  files in a directory are stored in a file called "attrib", and
+  mangling avoids file name collisions (I discarded the idea of having
+  a duplicate directory tree for every backup just to store the
+  attributes). Other meta-data (eg: rsync checksums) could be stored in
+  file names preceded by, eg, "c".  There are two other benefits to
+  mangling: the share name might contain "/" (eg: "/home/craig" for tar
+  transport), and I wanted that represented as a single level in the
+  storage tree.  Secondly, as files are written to NewFileList for later
+  processing by BackupPC_link, embedded newlines in the file's path
+  will cause problems which are avoided by mangling.
+
+  The CGI script undoes the mangling, so it is invisible to the user.
+  Of course, old (unmangled) backups are still supported by the CGI
+  interface.
+
+* Various changes to the CGI interface, BackupPC_Admin:
+
+  + Added button that allows users to manually start a full dump in
+    addition to the existing incremental dump.
+
+  + Added display of file attributes when browsing backups.
+
+  + Added an optional holdoff time specified by the user when canceling
+    a backup. BackupPC will not attempt any new backups for at least the
+    specified time. This holdoff time can be changed whether or not a
+    backup is running.
+
+  + Added supports for file mangling, and correct merging of unfilled
+    backups from mangled or unmangled (and compressed or uncompressed)
+    fulls when browsing or restoring.
+
+  + Only displays a "Start Incr Backup" button if there are already some
+    backups.
+
+  + For DHCP hosts, when a user tries to manually start a backup, add
+    a check for the netbios name of both the host the request came
+    from (REMOTE_ADDR) and the last known DHCP address for that host
+    to see if either address matches the host. If not, an error
+    message is display. The previous behavior was that only requests
+    from the client itself succeeded, and requests from other machines
+    quietly failed.
+
+* Changed the version numbering to X.Y.Z, instead of X.0Y. This release
+  is 1.4.0. The first digit is for major new releases, the middle digit
+  is for significant feature releases and improvements, and the last
+  digit is for bug fixes. You should think of the old 1.00, 1.01, 1.02
+  and 1.03 as 1.0.0, ..., 1.3.0.
+
+* BackupPC and the CGI script BackupPC_Admin now check that the effective
+  user id is correct to avoid accidentally launching BackupPC as the
+  wrong user or detecting CGI configuration problems.  This behavior
+  can be turned off using the $Conf{BackupPCUserVerify} option.
+
+* In numerous places changed "Smb" to "Xfer" (eg: log file names) to
+  support generic names for both smb and tar transport methods.  The
+  CGI script checks for old names for backward compatibility.
+
+* Major changed to Backup_dump to support new tar transport.  All transport
+  specific code moved into BackupPC::Xfer::Smb and BackupPC::Xfer::Tar
+  objects.
+
+* Added workaround for a bug in Samba's smbclient for files between 2GB
+  and 4GB.  The file size in the tar header is incorrect.  This allows
+  files up to 4GB to work with smbclient, rather than 2GB.  To support
+  files larger than 2GB you must make sure perl is compiled with the
+  uselargefiles option (use "perl -V | egrep largefiles" to check) and
+  the pool directory must be on a file system that supports large files.
+
+* Moved the pool writing code into a module BackupPC::PoolWrite.  This
+  allows the clever file pool checking (digest, uncompressing, comparing
+  etc with minimum disk IO) to be used easily in multiple places (eg: it
+  is now used for writing attribute files so they can be pooled).
+
+* Changed MD5 to Digest::MD5 to avoid use of the depreceated MD5 module.
+
+* Shortened default $Conf{MyPath} so that perl's taint mode is more likely
+  to be happy.  The old $Conf{MyPath} contained /usr/local/bin, which
+  on one user's machine was world writable and perl -T correctly
+  complained about it.
+
+* Fixed ping command options in Lib.pm so that it works on OpenBSD.
+  Thanks to Kyle Amon for sending the fix.  Decided to move the
+  ping options from Lib.pm into config.pl (as $Conf{PingArgs}) and
+  now configure.pl tries to come up with a sensible default based on
+  the OS.
+
+* Fixed argument checking in BackupPC_tarExtract to allow '$' in the
+  share name (eg: C$).  Thanks to Jules Agee for this fix.  Also
+  changed the default config.pl so that single quotes are used
+  everywhere so that people don't get tripped up putting '$' inside
+  double-quoted strings.
+
+#------------------------------------------------------------------------
+# Version 1.03, 9 Dec 2001
+#------------------------------------------------------------------------
+
+* BackupPC now has full support for compression.  There are now two
+  pool areas, the original pool for uncompressed files, and cpool for
+  compressed files. The compression is done by Compress::Zlib.
+  Compression reduces the pool disk usage by around 40%, although your
+  mileage may vary.  Compression is optional and can also be specified on
+  a per-PC basis (although this will cost more pool storage since many
+  backup files will have to be stored in both compressed and
+  uncompressed forms.
+
+* A new script, BackupPC_compressPool, can be run to compress the entire
+  pool.  This is used once to migrate all the pool data from uncompressed
+  to compressed on existing installations.  Read the documentation
+  (Installing BackupPC/Compressing an existing pool) before running
+  BackupPC_compressPool!
+
+  Alternatively, compression can simply be turned on and all new backups
+  will be compressed. Both old (uncompressed) and new (compressed)
+  backups can be browsed and viewed. Eventually, the old backups will
+  expire and all the pool data will be compressed.  However, until the
+  old backups expire, this approach could require 60% or more additional
+  pool storage space to store both uncompressed and compressed versions
+  of the backup files.
+
+* Significant improvements to the cgi interface, BackupPC_Admin:
+
+    - much better layout navigation
+    - handles compressed backup files and compressed log files
+    - handles unfilled incremental dumps
+    - better backup directory browsing navigation
+    - reports compression statistics
+    - $Conf{CgiDateFormatMMDD} allows you to set date format (MM/DD or DD/MM)
+    - Additional customization with $Conf{CgiHeaderFontType},
+      $Conf{CgiHeaderFontSize}, $Conf{CgiNavBarBgColor}, and
+      $Conf{CgiHeaderBgColor}.
+
+* Eliminated BackupPC_queueAll.  BackupPC directly reads the hosts
+  file and queues the PCs itself.  Like config.pl, BackupPC will
+  re-read the hosts file on each wakeup if its modification time
+  changes, or upon a SIGHUP.  This also makes for better behavior
+  when adding a host: if you add hosts, simply send a SIGHUP to
+  BackupPC or wait for the next wakeup.
+
+* BackupPC_dump now compresses the SmbLOG file if compression is enabled.
+
+* BackupPC_dump keeps track of compressed file sizes so that compression
+  statistics can be reported by the cgi interface.
+
+* Aging of old log files now handles compressed log files (.z extension).
+
+* Added configuration option $Conf{IncrFill} to specify whether
+  incremental dumps should be filled in.  Old behavior was that
+  filling was on.  Now it's optional.  See config.pl for more
+  details.
+
+* BackupPC_nightly now cleans and generates statistics for both
+  the uncompressed pool and compressed pool (cpool).
+
+* Added new utility script BackupPC_zcat that can be used to
+  uncompresses BackupPC files.
+
+* configure.pl offers various options related to compression,
+  depending upon whether this is a new install or upgrade,
+  and whether or not Compress::Zlib is installed.
+
+* configure.pl now makes a backup copy of config.pl before
+  config.pl is updated.
+
+* added three new fields to the backups file to handle optional
+  filling and compression stats.
+
+* Added -e option to BackupPC_dump.  BackupPC now invokes BackupPC_dump -e
+  on each dhcp host once each night to verify that very old backups are
+  expired.  This ensures that very old backups are expired even if
+  the dhcp host has not been on the network for a long time.
+
+* fixed bug in BackupPC::FileZIO.pm that required Compress::Zlib,
+  even if compression was off.  Thanks to Steve Holmes for reporting
+  this.
+
+* fixed bug that caused a BackupPC queue to get blocked when a backup
+  cancel attempt was made during the BackupPC_link phase.
+
+#------------------------------------------------------------------------
+# Version 1.02, 28 Oct 2001.
+#------------------------------------------------------------------------
+
+* Added new script BackupPC_tarExtract to extract the smbclient tar
+  archive. This reduces disk writes by perhaps 90-95% and disk reads by
+  50%. Previously, tar was used to extract and write everything to disk.
+  Then BackupPC_dump would read enough of each file to compute the MD5
+  digest, and then compare the full file with candidate pool files.  So
+  for each 1MB file that matches a single file in the pool, there would
+  be 1MB of disk writes and 2MB of disk reads (to compare two 1MB files).
+
+  BackupPC_tarExtract instead extracts the archive using a 1MB memory
+  buffer.  This allows the MD5 digest to be computed without touching the
+  disk.  Next, any potential pool file compares are done by comparing the
+  pool file against the incoming tar data in memory, which only requires
+  the pool file to be read.  So for each 1MB file that matches a single
+  file in the pool, there are now no disk writes, and only 1MB of reads.
+  BackupPC_tarExtract handles arbitrary size files and repeated
+  potential pool matches.  If the incoming file doesn't match the pool
+  then it is written to disk (once the pool is mature this happens maybe
+  5-10% of the time).
+
+* Substantial changes to BackupPC_dump:
+
+    + BackupPC_tarExtract is now used in place of tar.
+
+    + BackupPC_dump now reads the output from both smbclient and
+      BackupPC_tarExtract and merges them into SmbLOG.
+
+    + Named pipes are no longer used to connect smbclient to tar
+      (now BackupPC_tarExtract).  Regular pipes are used instead.
+      This avoids the need to system mknod or mkfifo.
+
+    + Locked files on the client that can't be read by smbclient
+      previously were filled with 0x0 bytes by smbclient, meaning
+      tar extracted a useless file filled with 0x0 bytes.  Now,
+      BackupPC_dump watches the output of smbclient and removes
+      any files that smbclient couldn't read.  This avoids storing
+      useless files.  It tries to replace such files with a hard link
+      to a previous dump.  These actions appear in the log file.
+
+* added new module lib/BackupPC/FileZIO.pm. This handles pool file
+  I/O and is used by BackupPC_tarExtract.  BackupPC::FileIO supports
+  reading and writing compressed and regular files and provides all the
+  hooks for compression support in BackupPC (should be supported in next
+  version). BackupPC::FileIO also does efficient writing of files that
+  contain leading 0x0 bytes (by seeking past the 0x0 bytes). This is
+  helpful when smbclient reads a locked file, and it fills the tar
+  output with a file of the correct size but all 0x0.  Such files will be
+  later removed by BackupPC_dump.  But in the meantime, BackupPC::FileIO
+  writes such files efficiently (as sparse files), meaning just a few
+  blocks of disk space will be needed even if the file is large.
+
+* alive/dead counting for blackout now works correctly for DHCP hosts.
+
+* BackupPC resets activeJob on startup, to fix bug when BackupPC was
+  killed and restarted with backups running.
+
+* added extra non blocking select() in BackupPC to make sure the socket
+  reads don't block.
+
+* BackupPC avoids queuing multiple BackupPC_queueAll's on the CmdQueue.
+
+* Updated BackupPC_sendEmail to correctly parse the locked file
+  error from 2.2.1a smbclient, so that missing Outlook file emails
+  can be correctly sent.
+
+* Changed HostInfoRead() in lib/BackupPC/Lib.pm to lowercase the
+  hostname read from the hosts file.
+
+* BackupPC_Admin provides general summary when the host name is empty.
+
+* configure.pl (and BackupPC) now requires perl 5.6.0 or later.
+
+* configure.pl complains if BackupPC is already running, reminding you
+  to stop it before upgrading.
+
+* updated documentation, and fixed auto-insertion of config.pl into
+  BackupPC.pod (previously the last config parameter was left out of
+  BackupPC.pod).
+
+#------------------------------------------------------------------------
+# Version 1.01, 30 Sep 2001
+#------------------------------------------------------------------------
+
+* Documentation cleanup in README, doc/BackupPC.pod, conf/config.pl.
+
+* BackupPC_sendMail now reads the optional per-PC config file, allowing
+  email configuration parameters to be set on a per-PC basis.
+
+* Removed the unused 4096-length MD5 digest code in lib/BackupPC/Lib.pm.
+
+#------------------------------------------------------------------------
+# Version 1.00, 21 Sep 2001
+#------------------------------------------------------------------------
+
+* Initial release of BackupPC on sourceforge.net.

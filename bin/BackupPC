@@ -1,0 +1,1974 @@
+#!/usr/bin/perl
+#============================================================= -*-perl-*-
+#
+# BackupPC: Main program for PC backups.
+#
+# DESCRIPTION
+#
+#   BackupPC reads the configuration and status information from
+#   $ConfDir/conf.  It then runs and manages all the backup activity.
+#
+#   As specified by $Conf{WakeupSchedule}, BackupPC wakes up periodically
+#   to queue backups on all the PCs.  This is a four step process:
+#     1) For each host and DHCP address backup requests are queued on the
+#        background command queue.
+#     2) For each PC, BackupPC_dump is forked.  Several of these may
+#        be run in parallel, based on the configuration.
+#     3) For each complete, good, backup, BackupPC_link is forked.
+#        Only one of these tasks runs at a time.
+#     4) In the background BackupPC_trashClean is run to remove any expired
+#        backups.  Once each night, BackupPC_nightly is run to complete some
+#        additional administrative tasks (pool cleaning etc).
+#
+#   BackupPC also listens for connections on a unix domain socket and
+#   the tcp port $Conf{ServerPort}, which are used by various
+#   sub-programs and the CGI script BackupPC_Admin for status reporting
+#   and user-initiated backup or backup cancel requests.
+#
+# AUTHOR
+#   Craig Barratt  <cbarratt@users.sourceforge.net>
+#
+# COPYRIGHT
+#   Copyright (C) 2001-2013  Craig Barratt
+#
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 2 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software
+#   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+#
+#========================================================================
+#
+# Version 3.3.0, released 14 Apr 2013.
+#
+# See http://backuppc.sourceforge.net.
+#
+#========================================================================
+
+use strict;
+no  utf8;
+use vars qw(%Status %Info $Hosts);
+use lib "__INSTALLDIR__/lib";
+use BackupPC::Lib;
+use BackupPC::FileZIO;
+use Encode qw/decode_utf8/;
+
+use File::Path;
+use Data::Dumper;
+use Getopt::Std;
+use Socket;
+use Carp;
+use Digest::MD5;
+use POSIX qw(setsid);
+
+###########################################################################
+# Handle command line options
+###########################################################################
+my %opts;
+if ( !getopts("d", \%opts) || @ARGV != 0 ) {
+    print("usage: $0 [-d]\n");
+    exit(1);
+}
+
+###########################################################################
+# Initialize major data structures and variables
+###########################################################################
+
+#
+# Get an instance of BackupPC::Lib and get some shortcuts.
+#
+die("BackupPC::Lib->new failed\n") if ( !(my $bpc = BackupPC::Lib->new) );
+my $TopDir = $bpc->TopDir();
+my $BinDir = $bpc->BinDir();
+my $LogDir = $bpc->LogDir();
+my %Conf   = $bpc->Conf();
+
+#
+# Verify we are running as the correct user
+#
+if ( $Conf{BackupPCUserVerify}
+        && $> != (my $uid = (getpwnam($Conf{BackupPCUser}))[2]) ) {
+    die "Wrong user: my userid is $>, instead of $uid ($Conf{BackupPCUser})\n";
+}
+
+#
+# %Status maintain status information about each host.
+# It is a hash of hashes, whose first index is the host.
+#
+%Status     = ();
+
+#
+# %Info is a hash giving general information about BackupPC status.
+#
+%Info       = ();
+
+#
+# Read old status
+#
+if ( -f "$LogDir/status.pl" && !(my $ret = do "$LogDir/status.pl") ) {
+    if ( $@ ) {
+        print STDERR "couldn't parse $LogDir/status.pl: $@";
+    } elsif ( !defined($ret) ) {
+        print STDERR "couldn't do $LogDir/status.pl: $!";
+    } else {
+        print STDERR "couldn't run $LogDir/status.pl";
+    }
+}
+
+#
+# %Jobs maintains information about currently running jobs.
+# It is a hash of hashes, whose first index is the host.
+#
+my %Jobs       = ();
+
+#
+# There are three command queues:
+#   - @UserQueue is a queue of user initiated backup requests.
+#   - @BgQueue is a queue of automatically scheduled backup requests.
+#   - @CmdQueue is a queue of administrative jobs, including tasks
+#     like BackupPC_link, BackupPC_trashClean, and BackupPC_nightly
+# Each queue is an array of hashes.  Each hash stores information
+# about the command request.
+#
+my @UserQueue  = ();
+my @CmdQueue   = ();
+my @BgQueue    = ();
+
+#
+# To quickly lookup if a given host is on a given queue, we keep
+# a hash of flags for each queue type.
+#
+my(%CmdQueueOn, %UserQueueOn, %BgQueueOn);
+
+#
+# One or more clients can connect to the server to get status information
+# or request/cancel backups etc.  The %Clients hash maintains information
+# about each of these socket connections.  The hash key is an incrementing
+# number stored in $ClientConnCnt.  Each entry is a hash that contains
+# various information about the client connection.
+#
+my %Clients    = ();
+my $ClientConnCnt;
+
+#
+# Read file descriptor mask used by select().  Every file descriptor
+# on which we expect to read (or accept) has the corresponding bit
+# set.
+#
+my $FDread     = '';
+
+#
+# Unix seconds when we next wakeup.  A value of zero forces the scheduler
+# to compute the next wakeup time.
+#
+my $NextWakeup = 0;
+
+#
+# Name of signal saved by catch_signal
+#
+my $SigName = "";
+
+#
+# Misc variables
+#
+my($RunNightlyWhenIdle, $FirstWakeup, $CmdJob, $ServerInetPort);
+my($BackupPCNightlyJobs, $BackupPCNightlyLock);
+
+#
+# Complete the rest of the initialization
+#
+Main_Initialize();
+
+###########################################################################
+# Main loop
+###########################################################################
+while ( 1 )
+{
+    #
+    # Check if we can/should run BackupPC_nightly
+    #
+    Main_TryToRun_nightly();
+
+    #
+    # Check if we can run a new command from @CmdQueue.
+    #
+    Main_TryToRun_CmdQueue();
+
+    #
+    # Check if we can run a new command from @UserQueue or @BgQueue.
+    #
+    Main_TryToRun_Bg_or_User_Queue();
+
+    #
+    # Do a select() to wait for the next interesting thing to happen
+    # (timeout, signal, someone sends a message, child dies etc).
+    #
+    my $fdRead = Main_Select();
+
+    #
+    # Process a signal if we received one.
+    #
+    if ( $SigName ) {
+        Main_Process_Signal();
+        $fdRead = undef;
+    }
+
+    #
+    # Check if a timeout has occurred.
+    #
+    Main_Check_Timeout();
+
+    #
+    # Check for, and process, any messages (output) from our jobs
+    #
+    Main_Check_Job_Messages($fdRead);
+
+    #
+    # Check for, and process, any output from our clients.  Also checks
+    # for new connections to our SERVER_UNIX and SERVER_INET sockets.
+    #
+    Main_Check_Client_Messages($fdRead);
+}
+
+############################################################################
+# Main_Initialize()
+#
+# Main initialization routine.  Called once at statup.
+############################################################################
+sub Main_Initialize
+{
+    umask($Conf{UmaskMode});
+
+    #
+    # Check for another running process, verify executables are configured
+    # correctly and make sure $TopDir is on a file system that supports
+    # hardlinks.
+    #
+    if ( $Info{pid} ne "" && kill(0, $Info{pid}) ) {
+        print(STDERR $bpc->timeStamp,
+                 "Another BackupPC is running (pid $Info{pid}); quitting...\n");
+        exit(1);
+    }
+
+    foreach my $progName ( qw(SmbClientPath NmbLookupPath PingPath DfPath
+                              SendmailPath SshPath) ) {
+        next if ( $Conf{$progName} eq "" || -x $Conf{$progName} );
+        print(STDERR $bpc->timeStamp,
+                     "\$Conf{$progName} = '$Conf{$progName}' is not a"
+                   . " valid executable program\n");
+        exit(1);
+    }
+
+    if ( !$bpc->HardlinkTest("$TopDir/pc", "$TopDir/cpool") ) {
+        print(STDERR $bpc->timeStamp, "Can't create a test hardlink between a file"
+                   . " in $TopDir/pc and $TopDir/cpool.  Either these are different"
+                   . " file systems, or this file system doesn't support hardlinks,"
+                   . " or these directories don't exist, or there is a permissions"
+                   . " problem, or the file system is out of inodes or full.  Use"
+                   . " df, df -i, and ls -ld to check each of these possibilities."  
+                   . " Quitting...\n");
+        exit(1);
+    }
+
+    if ( $opts{d} ) {
+        #
+        # daemonize by forking; more robust method per:
+        #       http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=301057
+        #
+        my $pid;
+        defined($pid = fork) or die("Can't fork: $!");
+        exit if ( $pid );   # parent exits
+
+        POSIX::setsid();
+        defined($pid = fork) or die("Can't fork: $!");
+        exit if $pid;   # parent exits
+
+        chdir ("/") or die("Cannot chdir to /: $!\n");
+        close(STDIN);
+        open(STDIN , ">/dev/null") or die("Cannot open /dev/null as stdin\n");
+        # STDOUT and STDERR are handled in LogFileOpen() right below,
+        # otherwise we would have to reopen them too.
+    }
+
+    #
+    # Open the LOG file and redirect STDOUT, STDERR etc
+    #
+    LogFileOpen();
+
+    #
+    # Read the hosts file (force a read).
+    #
+    exit(1) if ( !HostsUpdate(1) );
+
+    #
+    # Clean up %ENV for taint checking
+    #
+    delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+    $ENV{PATH} = $Conf{MyPath};
+
+    #
+    # Initialize server sockets
+    #
+    ServerSocketInit();
+
+    #
+    # Catch various signals
+    #
+    foreach my $sig ( qw(INT BUS SEGV PIPE TERM ALRM HUP) ) {
+        $SIG{$sig} = \&catch_signal;
+    }
+
+    #
+    # Report that we started, and update %Info.
+    #
+    print(LOG $bpc->timeStamp, "BackupPC started, pid $$\n");
+    $Info{ConfigModTime} = $bpc->ConfigMTime();
+    $Info{pid} = $$;
+    $Info{startTime} = time;
+    $Info{ConfigLTime} = time;
+    $Info{Version} = $bpc->{Version};
+
+    #
+    # Update the status left over form the last time BackupPC ran.
+    # Requeue any pending links.
+    #
+    foreach my $host ( sort(keys(%$Hosts)) ) {
+        if ( $Status{$host}{state} eq "Status_backup_in_progress" ) {
+            #
+            # should we restart it?  skip it for now.
+            #
+            $Status{$host}{state} = "Status_idle";
+        } elsif ( $Status{$host}{state} eq "Status_link_pending"
+                || $Status{$host}{state} eq "Status_link_running" ) {
+            QueueLink($host);
+        } else {
+            $Status{$host}{state} = "Status_idle";
+        }
+        $Status{$host}{activeJob} = 0;
+    }
+    foreach my $host ( sort(keys(%Status)) ) {
+        next if ( defined($Hosts->{$host}) );
+	delete($Status{$host});
+    }
+
+    #
+    # Write out our initial status and save our PID
+    #
+    StatusWrite();
+    unlink("$LogDir/BackupPC.pid");
+    if ( open(PID, ">", "$LogDir/BackupPC.pid") ) {
+        print(PID $$);
+        close(PID);
+        chmod(0444, "$LogDir/BackupPC.pid");
+    }
+
+    #
+    # For unknown reasons there is a very infrequent error about not
+    # being able to coerce GLOBs inside the XS Data::Dumper.  I've
+    # only seen this on a particular platform and perl version.
+    # For now the workaround appears to be use the perl version of
+    # XS Data::Dumper.
+    #
+    $Data::Dumper::Useqq = 1;
+}
+
+############################################################################
+# Main_TryToRun_nightly()
+#
+# Checks to see if we can/should run BackupPC_nightly or
+# BackupPC_trashClean.  If so we push the appropriate command onto
+# @CmdQueue.
+############################################################################
+sub Main_TryToRun_nightly
+{
+    #
+    # Check if we should run BackupPC_nightly or BackupPC_trashClean.
+    # BackupPC_nightly is run when the current job queue is empty.
+    # BackupPC_trashClean is run in the background always.
+    #
+    my $trashCleanRunning = defined($Jobs{$bpc->trashJob}) ? 1 : 0;
+    if ( !$trashCleanRunning && !$CmdQueueOn{$bpc->trashJob} ) {
+	#
+	# This should only happen once at startup, but just in case this
+	# code will re-start BackupPC_trashClean if it quits
+	#
+	unshift(@CmdQueue, {
+		host    => $bpc->trashJob,
+		user    => "BackupPC",
+		reqTime => time,
+		cmd     => ["$BinDir/BackupPC_trashClean"],
+	    });
+	$CmdQueueOn{$bpc->trashJob} = 1;
+    }
+    if ( $RunNightlyWhenIdle == 1 ) {
+        #
+        # Queue multiple nightly jobs based on the configuration
+        #
+	$Conf{MaxBackupPCNightlyJobs} = 1
+		    if ( $Conf{MaxBackupPCNightlyJobs} <= 0 );
+	$Conf{BackupPCNightlyPeriod} = 1
+		    if ( $Conf{BackupPCNightlyPeriod} <= 0 );
+	#
+	# Decide what subset of the 16 top-level directories 0..9a..f
+	# we run BackupPC_nightly on, based on $Conf{BackupPCNightlyPeriod}.
+	# If $Conf{BackupPCNightlyPeriod} == 1 then we run 0..15 every
+	# time.  If $Conf{BackupPCNightlyPeriod} == 2 then we run
+	# 0..7 one night and 89a-f the next night.  And so on.
+	#
+	# $Info{NightlyPhase} counts which night, from 0 to
+	# $Conf{BackupPCNightlyPeriod} - 1.
+	#
+        my $start = int($Info{NightlyPhase} * 16
+			    / $Conf{BackupPCNightlyPeriod});
+	my $end = int(($Info{NightlyPhase} + 1) * 16
+			    / $Conf{BackupPCNightlyPeriod});
+	$end = $start + 1 if ( $end <= $start );
+	$Info{NightlyPhase}++;
+	$Info{NightlyPhase} = 0 if ( $end >= 16 );
+
+	#
+	# Zero out the data we expect to get from BackupPC_nightly.
+	#
+	for my $p ( qw(pool cpool) ) {
+	    for ( my $i = $start ; $i < $end ; $i++ ) {
+		$Info{pool}{$p}[$i]{FileCnt}       = 0;
+		$Info{pool}{$p}[$i]{DirCnt}        = 0;
+		$Info{pool}{$p}[$i]{Kb}            = 0;
+		$Info{pool}{$p}[$i]{Kb2}           = 0;
+		$Info{pool}{$p}[$i]{KbRm}          = 0;
+		$Info{pool}{$p}[$i]{FileCntRm}     = 0;
+		$Info{pool}{$p}[$i]{FileCntRep}    = 0;
+		$Info{pool}{$p}[$i]{FileRepMax}    = 0;
+		$Info{pool}{$p}[$i]{FileCntRename} = 0;
+		$Info{pool}{$p}[$i]{FileLinkMax}   = 0;
+		$Info{pool}{$p}[$i]{Time}          = 0;
+	    }
+	}
+	print(LOG $bpc->timeStamp,
+		sprintf("Running %d BackupPC_nightly jobs from %d..%d"
+		      . " (out of 0..15)\n",
+		      $Conf{MaxBackupPCNightlyJobs}, $start, $end - 1));
+
+	#
+	# Now queue the $Conf{MaxBackupPCNightlyJobs} jobs.
+	# The granularity on start and end is now 0..255.
+	#
+	$start *= 16;
+	$end   *= 16;
+	my $start0 = $start;
+        for ( my $i = 0 ; $i < $Conf{MaxBackupPCNightlyJobs} ; $i++ ) {
+            #
+            # The first nightly job gets the -m option (does email, log aging).
+            # All jobs get the start and end options from 0..255 telling
+            # them which parts of the pool to traverse.
+            #
+            my $cmd = ["$BinDir/BackupPC_nightly"];
+            push(@$cmd, "-m") if ( $i == 0 );
+            push(@$cmd, $start);
+            $start = $start0 + int(($end - $start0)
+				  * ($i + 1) / $Conf{MaxBackupPCNightlyJobs});
+            push(@$cmd, $start - 1);
+            my $job = $bpc->adminJob($i);
+            unshift(@CmdQueue, {
+                    host    => $job,
+                    user    => "BackupPC",
+                    reqTime => time,
+                    cmd     => $cmd,
+                });
+            $CmdQueueOn{$job} = 1;
+        }
+        $RunNightlyWhenIdle = 2;
+    }
+}
+
+############################################################################
+# Main_TryToRun_CmdQueue()
+#
+# Decide if we can run a new command from the @CmdQueue.
+# We only run one of these at a time.  The @CmdQueue is
+# used to run BackupPC_link (for the corresponding host),
+# BackupPC_trashClean, and BackupPC_nightly using a fake
+# host name of $bpc->adminJob.
+############################################################################
+sub Main_TryToRun_CmdQueue
+{
+    my($req, $host);
+
+    while ( $CmdJob eq "" && @CmdQueue > 0 && $RunNightlyWhenIdle != 1
+            || @CmdQueue > 0 && $RunNightlyWhenIdle == 2
+                             && $bpc->isAdminJob($CmdQueue[0]->{host})
+                ) {
+        local(*FH);
+        $req = pop(@CmdQueue);
+
+        $host = $req->{host};
+        if ( defined($Jobs{$host}) ) {
+            print(LOG $bpc->timeStamp,
+                       "Botch on admin job for $host: already in use!!\n");
+            #
+            # This could happen during normal opertion: a user could
+            # request a backup while a BackupPC_link is queued from
+            # a previous backup.  But it is unlikely.  Just put this
+            # request back on the end of the queue.
+            #
+            unshift(@CmdQueue, $req);
+            return;
+        }
+        $CmdQueueOn{$host} = 0;
+        my $cmd  = $req->{cmd};
+        my $pid = open(FH, "-|");
+        if ( !defined($pid) ) {
+            print(LOG $bpc->timeStamp,
+                       "can't fork for $host, request by $req->{user}\n");
+            close(FH);
+            next;
+        }
+        if ( !$pid ) {
+            setpgrp 0,0;
+            $ENV{BPC_REQUSER} = $req->{user};
+            POSIX::nice($Conf{CmdQueueNice}) if ( $Conf{CmdQueueNice} );
+            exec(@$cmd);
+            print(LOG $bpc->timeStamp, "can't exec @$cmd for $host\n");
+            exit(0);
+        }
+        $Jobs{$host}{pid}       = $pid;
+        $Jobs{$host}{fh}        = *FH;
+        $Jobs{$host}{fn}        = fileno(FH);
+        vec($FDread, $Jobs{$host}{fn}, 1) = 1;
+        $Jobs{$host}{startTime} = time;
+        $Jobs{$host}{reqTime}   = $req->{reqTime};
+	$cmd                    = $bpc->execCmd2ShellCmd(@$cmd);
+        $Jobs{$host}{cmd}       = $cmd;
+        $Jobs{$host}{user}      = $req->{user};
+        $Jobs{$host}{type}      = $Status{$host}{type};
+        $Status{$host}{state}   = "Status_link_running";
+        $Status{$host}{activeJob} = 1;
+        $Status{$host}{endTime} = time;
+        $CmdJob = $host if ( $host ne $bpc->trashJob );
+        $cmd =~ s/$BinDir\///g;
+        print(LOG $bpc->timeStamp, "Running $cmd (pid=$pid)\n");
+	if ( $cmd =~ /^BackupPC_nightly\s/ ) {
+	    $BackupPCNightlyJobs++;
+	    $BackupPCNightlyLock++;
+	}
+    }
+}
+
+############################################################################
+# Main_TryToRun_Bg_or_User_Queue()
+#
+# Decide if we can run any new backup requests from @BgQueue
+# or @UserQueue.  Several of these can be run at the same time
+# based on %Conf settings.  Jobs from @UserQueue take priority,
+# and at total of $Conf{MaxBackups} + $Conf{MaxUserBackups}
+# simultaneous jobs can run from @UserQueue.  After @UserQueue
+# is exhausted, up to $Conf{MaxBackups} simultaneous jobs can
+# run from @BgQueue.
+############################################################################
+sub Main_TryToRun_Bg_or_User_Queue
+{
+    my($req, $host);
+    my(@deferUserQueue, @deferBgQueue);
+    my $du;
+
+    if ( time - $Info{DUlastValueTime} >= 600 ) {
+        #
+        # Update our notion of disk usage no more than
+        # once every 10 minutes
+        #
+        $du = $bpc->CheckFileSystemUsage($TopDir);
+        $Info{DUlastValue}     = $du;
+        $Info{DUlastValueTime} = time;
+    } else {
+        #
+        # if we recently checked it then just use the old value
+        #
+        $du = $Info{DUlastValue};
+    }
+    if ( $Info{DUDailyMaxReset} ) {
+        $Info{DUDailyMaxStartTime} = time;
+        $Info{DUDailyMaxReset}     = 0;
+        $Info{DUDailyMax}          = 0;
+    }
+    if ( $du > $Info{DUDailyMax} ) {
+        $Info{DUDailyMax}     = $du;
+        $Info{DUDailyMaxTime} = time;
+    }
+    if ( $du > $Conf{DfMaxUsagePct} ) {
+        my @bgQueue = @BgQueue;
+        my $nSkip = 0;
+
+        #
+        # When the disk is too full, only run backups that will
+        # do expires, not regular backups
+        #
+        @BgQueue = ();
+        foreach $req ( @bgQueue ) {
+            if ( $req->{dumpExpire} ) {
+                unshift(@BgQueue, $req);
+            } else {
+                $BgQueueOn{$req->{host}} = 0;
+                $nSkip++;
+            }
+        }
+        if ( $nSkip ) {
+            print(LOG $bpc->timeStamp,
+                       "Disk too full ($du%); skipped $nSkip hosts\n");
+            $Info{DUDailySkipHostCnt} += $nSkip;
+        }
+    }
+
+    #
+    # Run background jobs anytime.  Previously they were locked out
+    # when BackupPC_nightly was running or pending with this
+    # condition on the while loop:
+    #
+    #    while ( $RunNightlyWhenIdle == 0 )
+    #
+    while ( 1 ) {
+        local(*FH);
+        my(@args, $progName, $type);
+        my $nJobs = keys(%Jobs);
+        #
+        # CmdJob and trashClean don't count towards MaxBackups / MaxUserBackups
+        #
+        if ( $CmdJob ne "" ) {
+            if ( $BackupPCNightlyJobs ) {
+                $nJobs -= $BackupPCNightlyJobs;
+            } else {
+                $nJobs--;
+            }
+        }
+        $nJobs-- if ( defined($Jobs{$bpc->trashJob} ) );
+        if ( $nJobs < $Conf{MaxBackups} + $Conf{MaxUserBackups}
+                        && @UserQueue > 0 ) {
+            $req = pop(@UserQueue);
+            if ( defined($Jobs{$req->{host}}) ) {
+                push(@deferUserQueue, $req);
+                next;
+            }
+            $UserQueueOn{$req->{host}} = 0;
+        } elsif ( $nJobs < $Conf{MaxBackups}
+                        && (@CmdQueue + $nJobs)
+                                <= $Conf{MaxBackups} + $Conf{MaxPendingCmds}
+                        && @BgQueue > 0 ) {
+            $req = pop(@BgQueue);
+            if ( defined($Jobs{$req->{host}}) ) {
+                #
+                # Job is currently running for this host; save it for later
+                #
+                unshift(@deferBgQueue, $req);
+                next;
+            }
+            $BgQueueOn{$req->{host}} = 0;
+        } else {
+            #
+            # Restore the deferred jobs
+            #
+            @BgQueue   = (@BgQueue,   @deferBgQueue);
+            @UserQueue = (@UserQueue, @deferUserQueue);
+            last;
+        }
+        $host = $req->{host};
+        my $user = $req->{user};
+        if ( $req->{restore} ) {
+            $progName = "BackupPC_restore";
+            $type     = "restore";
+            push(@args, $req->{hostIP}, $req->{host}, $req->{reqFileName});
+	} elsif ( $req->{archive} ) {
+            $progName = "BackupPC_archive";
+            $type     = "archive";
+            push(@args, $req->{user}, $req->{host}, $req->{reqFileName});
+        } else {
+            $progName = "BackupPC_dump";
+            $type     = "backup";
+            push(@args, "-I") if ( $req->{backupType} eq "autoIncr" );
+            push(@args, "-F") if ( $req->{backupType} eq "autoFull" );
+            push(@args, "-i") if ( $req->{backupType} eq "doIncr" );
+            push(@args, "-f") if ( $req->{backupType} eq "doFull" );
+            push(@args, "-d") if ( $req->{backupType} eq "dhcpPoll" );
+            push(@args, "-e") if ( $req->{dumpExpire} );
+            push(@args, $host);
+        }
+        my $pid = open(FH, "-|");
+        if ( !defined($pid) ) {
+            print(LOG $bpc->timeStamp,
+                   "can't fork to run $progName for $host, request by $user\n");
+            close(FH);
+            next;
+        }
+        if ( !$pid ) {
+            setpgrp 0,0;
+            exec("$BinDir/$progName", @args);
+            print(LOG $bpc->timeStamp, "can't exec $progName for $host\n");
+            exit(0);
+        }
+        $Jobs{$host}{pid}        = $pid;
+        $Jobs{$host}{fh}         = *FH;
+        $Jobs{$host}{fn}         = fileno(FH);
+        $Jobs{$host}{dhcp}       = $req->{dhcp};
+        vec($FDread, $Jobs{$host}{fn}, 1) = 1;
+        $Jobs{$host}{startTime}  = time;
+        $Jobs{$host}{reqTime}    = $req->{reqTime};
+        $Jobs{$host}{userReq}    = $req->{userReq};
+        $Jobs{$host}{cmd}        = $bpc->execCmd2ShellCmd($progName, @args);
+        $Jobs{$host}{user}       = $user;
+        $Jobs{$host}{type}       = $type;
+	$Status{$host}{userReq}  = $req->{userReq}
+					if ( defined($Hosts->{$host}) );
+        if ( !$req->{dhcp} ) {
+            $Status{$host}{state}     = "Status_".$type."_starting";
+            $Status{$host}{activeJob} = 1;
+            $Status{$host}{startTime} = time;
+            $Status{$host}{endTime}   = "";
+        }
+    }
+}
+
+############################################################################
+# Main_Select()
+#
+# If necessary, figure out when to next wakeup based on $Conf{WakeupSchedule},
+# and then do a select() to wait for the next thing to happen
+# (timeout, signal, someone sends a message, child dies etc).
+############################################################################
+sub Main_Select
+{
+    if ( $NextWakeup <= 0 ) {
+        #
+        # Figure out when to next wakeup based on $Conf{WakeupSchedule}.
+        #
+        my($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)
+						= localtime(time);
+        my($currHours) = $hour + $min / 60 + $sec / 3600;
+        if ( $bpc->ConfigMTime() != $Info{ConfigModTime} ) {
+            ServerReload("Re-read config file because mtime changed");
+        }
+        my $delta = -1;
+        foreach my $t ( @{$Conf{WakeupSchedule} || [0..23]} ) {
+            next if ( $t < 0 || $t > 24 );
+            my $tomorrow = $t + 24;
+            if ( $delta < 0
+                || ($tomorrow - $currHours > 0
+                                && $delta > $tomorrow - $currHours) ) {
+                $delta = $tomorrow - $currHours;
+                $FirstWakeup = $t == $Conf{WakeupSchedule}[0];
+            }
+            if ( $delta < 0
+                    || ($t - $currHours > 0 && $delta > $t - $currHours) ) {
+                $delta = $t - $currHours;
+                $FirstWakeup = $t == $Conf{WakeupSchedule}[0];
+            }
+        }
+        $NextWakeup = time + $delta * 3600;
+        $Info{nextWakeup} = $NextWakeup;
+        print(LOG $bpc->timeStamp, "Next wakeup is ",
+                  $bpc->timeStamp($NextWakeup, 1), "\n");
+    }
+    #
+    # Call select(), waiting until either a signal, a timeout,
+    # any output from our jobs, or any messages from clients
+    # connected via tcp.
+    # select() is where we (hopefully) spend most of our time blocked...
+    #
+    my $timeout = $NextWakeup - time;
+    $timeout = 1 if ( $timeout <= 0 );
+    my $ein = $FDread;
+    select(my $rout = $FDread, undef, $ein, $timeout);
+
+    return $rout;
+}
+
+############################################################################
+# Main_Process_Signal()
+#
+# Signal handler.
+############################################################################
+sub Main_Process_Signal
+{
+    #
+    # Process signals
+    #
+    if ( $SigName eq "HUP" ) {
+        ServerReload("Re-read config file because of a SIG_HUP");
+    } elsif ( $SigName ) {
+        ServerShutdown("Got signal $SigName... cleaning up");
+    }
+    $SigName = "";
+}
+
+############################################################################
+# Main_Check_Timeout()
+#
+# Check if a timeout has occured, and if so, queue all the PCs for backups.
+# Also does log file aging on the first timeout after midnight.
+############################################################################
+sub Main_Check_Timeout
+{
+    #
+    # Process timeouts
+    #
+    return if ( time < $NextWakeup || $NextWakeup <= 0 );
+    $NextWakeup = 0;
+    if ( $FirstWakeup ) {
+        #
+        # This is the first wakeup after midnight.  Do log file aging
+        # and various house keeping.
+        #
+        $FirstWakeup = 0;
+        printf(LOG "%s24hr disk usage: %d%% max, %d%% recent,"
+                   . " %d skipped hosts\n",
+                   $bpc->timeStamp, $Info{DUDailyMax}, $Info{DUlastValue},
+                   $Info{DUDailySkipHostCnt});
+        $Info{DUDailyMaxReset}        = 1;
+        $Info{DUDailyMaxPrev}         = $Info{DUDailyMax};
+        $Info{DUDailySkipHostCntPrev} = $Info{DUDailySkipHostCnt};
+        $Info{DUDailySkipHostCnt}     = 0;
+        my $lastLog = $Conf{MaxOldLogFiles} - 1;
+        if ( -f "$LogDir/LOG.$lastLog" ) {
+            print(LOG $bpc->timeStamp,
+                       "Removing $LogDir/LOG.$lastLog\n");
+            unlink("$LogDir/LOG.$lastLog");
+        }
+        if ( -f "$LogDir/LOG.$lastLog.z" ) {
+            print(LOG $bpc->timeStamp,
+                       "Removing $LogDir/LOG.$lastLog.z\n");
+            unlink("$LogDir/LOG.$lastLog.z");
+        }
+        print(LOG $bpc->timeStamp, "Aging LOG files, LOG -> LOG.0 -> "
+                   . "LOG.1 -> ... -> LOG.$lastLog\n");
+	close(STDERR);		# dup of LOG
+	close(STDOUT);		# dup of LOG
+        close(LOG);
+        for ( my $i = $lastLog - 1 ; $i >= 0 ; $i-- ) {
+            my $j = $i + 1;
+            rename("$LogDir/LOG.$i", "$LogDir/LOG.$j")
+                            if ( -f "$LogDir/LOG.$i" );
+            rename("$LogDir/LOG.$i.z", "$LogDir/LOG.$j.z")
+                            if ( -f "$LogDir/LOG.$i.z" );
+        }
+	#
+	# Compress the log file LOG -> LOG.0.z (if enabled).
+	# Otherwise, just rename LOG -> LOG.0.
+	#
+	BackupPC::FileZIO->compressCopy("$LogDir/LOG",
+                                        "$LogDir/LOG.0.z",
+                                        "$LogDir/LOG.0",
+                                        $Conf{CompressLevel}, 1);
+        LogFileOpen();
+        #
+        # Remember to run the nightly script when the next CmdQueue
+        # job is done.
+        #
+        if ( $RunNightlyWhenIdle == 2 ) {
+            print(LOG $bpc->timeStamp, "BackupPC_nightly is still running after 24 hours!!"
+                                     . "  You should adjust the config settings; Skipping this run\n");
+        } else {
+            $RunNightlyWhenIdle = 1;
+        }
+    }
+    #
+    # Write out the current status and then queue all the PCs
+    #
+    HostsUpdate(0);
+    StatusWrite();
+    %BgQueueOn = ()   if ( @BgQueue == 0 );
+    %UserQueueOn = () if ( @UserQueue == 0 );
+    %CmdQueueOn = ()  if ( @CmdQueue == 0 );
+    QueueAllPCs();
+}
+
+############################################################################
+# Main_Check_Job_Messages($fdRead)
+#
+# Check if select() says we have bytes waiting from any of our jobs.
+# Handle each of the messages when complete (newline terminated).
+############################################################################
+sub Main_Check_Job_Messages
+{
+    my($fdRead) = @_;
+    foreach my $host ( keys(%Jobs) ) {
+        next if ( !vec($fdRead, $Jobs{$host}{fn}, 1) );
+        my $mesg;
+        #
+        # do a last check to make sure there is something to read so
+        # we are absolutely sure we won't block.
+        #
+        vec(my $readMask, $Jobs{$host}{fn}, 1) = 1;
+        if ( !select($readMask, undef, undef, 0.0) ) {
+            print(LOG $bpc->timeStamp, "Botch in Main_Check_Job_Messages:"
+                        . " nothing to read from $host.  Debug dump:\n");
+            my($dump) = Data::Dumper->new(
+                         [  \%Clients, \%Jobs, \$FDread, \$fdRead],
+                         [qw(*Clients,  *Jobs   *FDread,  *fdRead)]);
+            $dump->Indent(1);
+            print(LOG $dump->Dump);
+            next;
+        }
+        my $nbytes = sysread($Jobs{$host}{fh}, $mesg, 1024);
+        $Jobs{$host}{mesg} .= $mesg if ( $nbytes > 0 );
+        #
+        # Process any complete lines of output from this jobs.
+        # Any output to STDOUT or STDERR from the children is processed here.
+        #
+        while ( $Jobs{$host}{mesg} =~ /(.*?)[\n\r]+(.*)/s ) {
+            $mesg = $1;
+            $Jobs{$host}{mesg} = $2;
+            if ( $Jobs{$host}{dhcp} ) {
+                if ( $mesg =~ /^DHCP (\S+) (\S+)/ ) {
+                    my $newHost = $bpc->uriUnesc($2);
+                    if ( defined($Jobs{$newHost}) ) {
+                        print(LOG $bpc->timeStamp,
+                                "Backup on $newHost is already running\n");
+                        kill($bpc->sigName2num("INT"), $Jobs{$host}{pid});
+                        $nbytes = 0;
+                        last;
+                    }
+                    $Jobs{$host}{dhcpHostIP} = $host;
+                    $Status{$newHost}{dhcpHostIP} = $host;
+                    $Jobs{$newHost} = $Jobs{$host};
+                    delete($Jobs{$host});
+                    $host = $newHost;
+                    $Status{$host}{state}      = "Status_backup_starting";
+                    $Status{$host}{activeJob}  = 1;
+                    $Status{$host}{startTime}  = $Jobs{$host}{startTime};
+                    $Status{$host}{endTime}    = "";
+                    $Jobs{$host}{dhcp}         = 0;
+                } else {
+                    print(LOG $bpc->timeStamp, "dhcp $host: $mesg\n");
+                }
+            } elsif ( $mesg =~ /^started (.*) dump, share=(.*)/ ) {
+                $Jobs{$host}{type}      = $1;
+                $Jobs{$host}{shareName} = $2;
+                print(LOG $bpc->timeStamp,
+                          "Started $1 backup on $host (pid=$Jobs{$host}{pid}",
+                          $Jobs{$host}{dhcpHostIP}
+                                ? ", dhcp=$Jobs{$host}{dhcpHostIP}" : "",
+                          ", share=$Jobs{$host}{shareName})\n");
+                $Status{$host}{state}     = "Status_backup_in_progress";
+                $Status{$host}{reason}    = "";
+                $Status{$host}{type}      = $1;
+                $Status{$host}{startTime} = time;
+                $Status{$host}{deadCnt}   = 0;
+                $Status{$host}{aliveCnt}++;
+                $Status{$host}{dhcpCheckCnt}--
+                                if ( $Status{$host}{dhcpCheckCnt} > 0 );
+            } elsif ( $mesg =~ /^xferPids (.*)/ ) {
+                $Jobs{$host}{xferPid} = $1;
+            } elsif ( $mesg =~ /^completionPercent (.*)/ ) {
+                $Jobs{$host}{completionPercent} = $1;
+            } elsif ( $mesg =~ /^started_restore/ ) {
+                $Jobs{$host}{type}    = "restore";
+                print(LOG $bpc->timeStamp,
+                          "Started restore on $host"
+                          . " (pid=$Jobs{$host}{pid})\n");
+                $Status{$host}{state}     = "Status_restore_in_progress";
+                $Status{$host}{reason}    = "";
+                $Status{$host}{type}      = "restore";
+                $Status{$host}{startTime} = time;
+                $Status{$host}{deadCnt}   = 0;
+                $Status{$host}{aliveCnt}++;
+            } elsif ( $mesg =~ /^started_archive/ ) {
+                $Jobs{$host}{type}    = "archive";
+                print(LOG $bpc->timeStamp,
+                          "Started archive on $host"
+                          . " (pid=$Jobs{$host}{pid})\n");
+                $Status{$host}{state}     = "Status_archive_in_progress";
+                $Status{$host}{reason}    = "";
+                $Status{$host}{type}      = "archive";
+                $Status{$host}{startTime} = time;
+                $Status{$host}{deadCnt}   = 0;
+                $Status{$host}{aliveCnt}++;
+            } elsif ( $mesg =~ /^(full|incr) backup complete/ ) {
+                print(LOG $bpc->timeStamp, "Finished $1 backup on $host\n");
+                $Status{$host}{reason}    = "Reason_backup_done";
+                delete($Status{$host}{error});
+                delete($Status{$host}{errorTime});
+                $Status{$host}{endTime}   = time;
+                $Status{$host}{lastGoodBackupTime} = time;
+            } elsif ( $mesg =~ /^backups disabled/ ) {
+                print(LOG $bpc->timeStamp,
+			    "Ignoring old backup error on $host\n");
+                $Status{$host}{reason}    = "Reason_backup_done";
+                delete($Status{$host}{error});
+                delete($Status{$host}{errorTime});
+                $Status{$host}{endTime}   = time;
+            } elsif ( $mesg =~ /^restore complete/ ) {
+                print(LOG $bpc->timeStamp, "Finished restore on $host\n");
+                $Status{$host}{reason}    = "Reason_restore_done";
+                delete($Status{$host}{error});
+                delete($Status{$host}{errorTime});
+                $Status{$host}{endTime}   = time;
+            } elsif ( $mesg =~ /^archive complete/ ) {
+                print(LOG $bpc->timeStamp, "Finished archive on $host\n");
+                $Status{$host}{reason}    = "Reason_archive_done";
+                delete($Status{$host}{error});
+                delete($Status{$host}{errorTime});
+                $Status{$host}{endTime}   = time;
+            } elsif ( $mesg =~ /^nothing to do/ ) {
+		if ( $Status{$host}{reason} ne "Reason_backup_failed"
+			&& $Status{$host}{reason} ne "Reason_restore_failed" ) {
+		    $Status{$host}{state}     = "Status_idle";
+		    $Status{$host}{reason}    = "Reason_nothing_to_do";
+		    $Status{$host}{startTime} = time;
+		}
+                $Status{$host}{dhcpCheckCnt}--
+                                if ( $Status{$host}{dhcpCheckCnt} > 0 );
+            } elsif ( $mesg =~ /^no ping response/
+                            || $mesg =~ /^ping too slow/
+                            || $mesg =~ /^host not found/ ) {
+                $Status{$host}{state}     = "Status_idle";
+                if ( $Status{$host}{userReq}
+			|| $Status{$host}{reason} ne "Reason_backup_failed"
+			|| $Status{$host}{error} =~ /^aborted by user/ ) {
+                    $Status{$host}{reason}    = "Reason_no_ping";
+		    $Status{$host}{error}     = $mesg;
+                    $Status{$host}{startTime} = time;
+                }
+                $Status{$host}{deadCnt}++;
+                if ( $Status{$host}{deadCnt} >= $Conf{BlackoutBadPingLimit} ) {
+		    $Status{$host}{aliveCnt} = 0;
+		}
+            } elsif ( $mesg =~ /^dump failed: (.*)/ ) {
+                $Status{$host}{state}     = "Status_idle";
+		$Status{$host}{error}     = $1;
+		$Status{$host}{errorTime} = time;
+		$Status{$host}{endTime}   = time;
+		if ( $Status{$host}{reason}
+			eq "Reason_backup_canceled_by_user" ) {
+		    print(LOG $bpc->timeStamp,
+			    "Backup canceled on $host ($1)\n");
+		} else {
+		    $Status{$host}{reason} = "Reason_backup_failed";
+		    print(LOG $bpc->timeStamp,
+			    "Backup failed on $host ($1)\n");
+		}
+            } elsif ( $mesg =~ /^restore failed: (.*)/ ) {
+                $Status{$host}{state}     = "Status_idle";
+                $Status{$host}{error}     = $1;
+                $Status{$host}{errorTime} = time;
+                $Status{$host}{endTime}   = time;
+		if ( $Status{$host}{reason}
+			 eq "Reason_restore_canceled_by_user" ) {
+		    print(LOG $bpc->timeStamp,
+			    "Restore canceled on $host ($1)\n");
+		} else {
+		    $Status{$host}{reason} = "Reason_restore_failed";
+		    print(LOG $bpc->timeStamp,
+			    "Restore failed on $host ($1)\n");
+		}
+            } elsif ( $mesg =~ /^archive failed: (.*)/ ) {
+                $Status{$host}{state}     = "Status_idle";
+                $Status{$host}{error}     = $1;
+                $Status{$host}{errorTime} = time;
+                $Status{$host}{endTime}   = time;
+		if ( $Status{$host}{reason}
+			 eq "Reason_archive_canceled_by_user" ) {
+		    print(LOG $bpc->timeStamp,
+			    "Archive canceled on $host ($1)\n");
+		} else {
+		    $Status{$host}{reason} = "Reason_archive_failed";
+		    print(LOG $bpc->timeStamp,
+			    "Archive failed on $host ($1)\n");
+		}
+            } elsif ( $mesg =~ /^log\s+(.*)/ ) {
+                print(LOG $bpc->timeStamp, "$1\n");
+            } elsif ( $mesg =~ /^BackupPC_stats (\d+) = (.*)/ ) {
+                my $chunk = int($1 / 16);
+                my @f = split(/,/, $2);
+                $Info{pool}{$f[0]}[$chunk]{FileCnt}       += $f[1];
+                $Info{pool}{$f[0]}[$chunk]{DirCnt}        += $f[2];
+                $Info{pool}{$f[0]}[$chunk]{Kb}            += $f[3];
+                $Info{pool}{$f[0]}[$chunk]{Kb2}           += $f[4];
+                $Info{pool}{$f[0]}[$chunk]{KbRm}          += $f[5];
+                $Info{pool}{$f[0]}[$chunk]{FileCntRm}     += $f[6];
+                $Info{pool}{$f[0]}[$chunk]{FileCntRep}    += $f[7];
+                $Info{pool}{$f[0]}[$chunk]{FileRepMax}     = $f[8]
+                        if ( $Info{pool}{$f[0]}[$chunk]{FileRepMax} < $f[8] );
+                $Info{pool}{$f[0]}[$chunk]{FileCntRename} += $f[9];
+                $Info{pool}{$f[0]}[$chunk]{FileLinkMax}    = $f[10]
+                        if ( $Info{pool}{$f[0]}[$chunk]{FileLinkMax} < $f[10] );
+                $Info{pool}{$f[0]}[$chunk]{FileLinkTotal} += $f[11];
+                $Info{pool}{$f[0]}[$chunk]{Time}           = time;
+            } elsif ( $mesg =~ /^BackupPC_nightly lock_off/ ) {
+		$BackupPCNightlyLock--;
+                if ( $BackupPCNightlyLock == 0 ) {
+                    #
+                    # This means the last BackupPC_nightly is done with
+		    # the pool clean, so it's ok to start running regular
+		    # backups again.  But starting in 3.0 regular jobs
+                    # are decoupled from BackupPC_nightly.
+                    #
+                    $RunNightlyWhenIdle = 0;
+		}
+            } elsif ( $mesg =~ /^processState\s+(.+)/ ) {
+                $Jobs{$host}{processState} = $1;
+            } elsif ( $mesg =~ /^link\s+(.+)/ ) {
+                my($h) = $1;
+                $Status{$h}{needLink} = 1;
+            } else {
+                print(LOG $bpc->timeStamp, "$host: $mesg\n");
+            }
+        }
+        #
+        # shut down the client connection if we read EOF
+        #
+        if ( $nbytes <= 0 ) {
+            close($Jobs{$host}{fh});
+            vec($FDread, $Jobs{$host}{fn}, 1) = 0;
+            if ( $CmdJob eq $host || $bpc->isAdminJob($host) ) {
+                my $cmd = $Jobs{$host}{cmd};
+                $cmd =~ s/$BinDir\///g;
+                print(LOG $bpc->timeStamp, "Finished $host ($cmd)\n");
+                $Status{$host}{state}    = "Status_idle";
+                $Status{$host}{endTime}  = time;
+                if ( $cmd =~ /^BackupPC_nightly\s/ ) {
+                    $BackupPCNightlyJobs--;
+		    #print(LOG $bpc->timeStamp, "BackupPC_nightly done; now"
+		    #         . " have $BackupPCNightlyJobs running\n");
+                    if ( $BackupPCNightlyJobs <= 0 ) {
+                        #
+                        # Last BackupPC_nightly has finished
+                        #
+                        $BackupPCNightlyJobs = 0;
+                        $RunNightlyWhenIdle = 0;
+                        $CmdJob = "";
+			#
+			# Combine the 16 per-directory results
+			#
+			for my $p ( qw(pool cpool) ) {
+			    $Info{"${p}FileCnt"}       = 0;
+			    $Info{"${p}DirCnt"}        = 0;
+			    $Info{"${p}Kb"}            = 0;
+			    $Info{"${p}Kb2"}           = 0;
+			    $Info{"${p}KbRm"}          = 0;
+			    $Info{"${p}FileCntRm"}     = 0;
+			    $Info{"${p}FileCntRep"}    = 0;
+			    $Info{"${p}FileRepMax"}    = 0;
+			    $Info{"${p}FileCntRename"} = 0;
+			    $Info{"${p}FileLinkMax"}   = 0;
+			    $Info{"${p}Time"}          = 0;
+			    for ( my $i = 0 ; $i < 16 ; $i++ ) {
+				$Info{"${p}FileCnt"}
+				       += $Info{pool}{$p}[$i]{FileCnt};
+				$Info{"${p}DirCnt"}
+				       += $Info{pool}{$p}[$i]{DirCnt};
+				$Info{"${p}Kb"}
+				       += $Info{pool}{$p}[$i]{Kb};
+				$Info{"${p}Kb2"}
+				       += $Info{pool}{$p}[$i]{Kb2};
+				$Info{"${p}KbRm"}
+				       += $Info{pool}{$p}[$i]{KbRm};
+				$Info{"${p}FileCntRm"}
+				       += $Info{pool}{$p}[$i]{FileCntRm};
+				$Info{"${p}FileCntRep"}
+				       += $Info{pool}{$p}[$i]{FileCntRep};
+				$Info{"${p}FileRepMax"}
+					= $Info{pool}{$p}[$i]{FileRepMax}
+					  if ( $Info{"${p}FileRepMax"} <
+					      $Info{pool}{$p}[$i]{FileRepMax} );
+				$Info{"${p}FileCntRename"}
+				       += $Info{pool}{$p}[$i]{FileCntRename};
+				$Info{"${p}FileLinkMax"}
+					= $Info{pool}{$p}[$i]{FileLinkMax}
+					  if ( $Info{"${p}FileLinkMax"} <
+					     $Info{pool}{$p}[$i]{FileLinkMax} );
+				$Info{"${p}Time"} = $Info{pool}{$p}[$i]{Time}
+					  if ( $Info{"${p}Time"} <
+						 $Info{pool}{$p}[$i]{Time} );
+			    }
+			    printf(LOG "%s%s nightly clean removed %d files of"
+				   . " size %.2fGB\n",
+				     $bpc->timeStamp, ucfirst($p),
+				     $Info{"${p}FileCntRm"},
+				     $Info{"${p}KbRm"} / (1000 * 1024));
+			    printf(LOG "%s%s is %.2fGB, %d files (%d repeated, "
+				   . "%d max chain, %d max links), %d directories\n",
+				     $bpc->timeStamp, ucfirst($p),
+				     $Info{"${p}Kb"} / (1000 * 1024),
+				     $Info{"${p}FileCnt"}, $Info{"${p}FileCntRep"},
+				     $Info{"${p}FileRepMax"},
+				     $Info{"${p}FileLinkMax"}, $Info{"${p}DirCnt"});
+			}
+                    }
+                } else {
+                    $CmdJob = "";
+                }
+            } else {
+                #
+                # Queue BackupPC_link to complete the backup
+                # processing for this host.
+                #
+                if ( defined($Status{$host})
+                            && ($Status{$host}{reason} eq "Reason_backup_done"
+                                || $Status{$host}{needLink}) ) {
+                    QueueLink($host);
+                } elsif ( defined($Status{$host}) ) {
+                    $Status{$host}{state} = "Status_idle";
+                }
+            }
+            delete($Jobs{$host});
+            $Status{$host}{activeJob} = 0 if ( defined($Status{$host}) );
+        }
+    }
+    #
+    # When we are idle (empty Jobs, CmdQueue, BgQueue, UserQueue) we
+    # do a pass over %Status updating the deadCnt and aliveCnt for
+    # DHCP hosts.  The reason we need to do this later is we can't
+    # be sure whether a DHCP host is alive or dead until we have passed
+    # over all the DHCP pool.
+    #
+    return if ( @CmdQueue || @BgQueue || @UserQueue || keys(%Jobs) > 1 );
+    foreach my $host ( keys(%Status) ) {
+        next if ( $Status{$host}{dhcpCheckCnt} <= 0 );
+        $Status{$host}{deadCnt} += $Status{$host}{dhcpCheckCnt};
+        $Status{$host}{dhcpCheckCnt} = 0;
+        if ( $Status{$host}{deadCnt} >= $Conf{BlackoutBadPingLimit} ) {
+            $Status{$host}{aliveCnt} = 0;
+        }
+    }
+}
+
+############################################################################
+# Main_Check_Client_Messages($fdRead)
+#
+# Check for, and process, any output from our clients.  Also checks
+# for new connections to our SERVER_UNIX and SERVER_INET sockets.
+############################################################################
+sub Main_Check_Client_Messages
+{
+    my($fdRead) = @_;
+    foreach my $client ( keys(%Clients) ) {
+        next if ( !vec($fdRead, $Clients{$client}{fn}, 1) );
+        my($mesg, $host);
+        #
+        # do a last check to make sure there is something to read so
+        # we are absolutely sure we won't block.
+        #
+        vec(my $readMask, $Clients{$client}{fn}, 1) = 1;
+        if ( !select($readMask, undef, undef, 0.0) ) {
+            print(LOG $bpc->timeStamp, "Botch in Main_Check_Client_Messages:"
+                        . " nothing to read from $client.  Debug dump:\n");
+            my($dump) = Data::Dumper->new(
+                         [  \%Clients, \%Jobs, \$FDread, \$fdRead],
+                         [qw(*Clients,  *Jobs   *FDread,  *fdRead)]);
+            $dump->Indent(1);
+            print(LOG $dump->Dump);
+            next;
+        }
+        my $nbytes = sysread($Clients{$client}{fh}, $mesg, 1024);
+        $Clients{$client}{mesg} .= $mesg if ( $nbytes > 0 );
+        #
+        # Process any complete lines received from this client.
+        #
+        while ( $Clients{$client}{mesg} =~ /(.*?)[\n\r]+(.*)/s ) {
+            my($reply);
+            my $cmd = $1;
+            $Clients{$client}{mesg} = $2;
+            #
+            # Authenticate the message by checking the MD5 digest
+            #
+            my $md5 = Digest::MD5->new;
+            if ( $cmd !~ /^(.{22}) (.*)/
+                || ($md5->add($Clients{$client}{seed}
+                            . $Clients{$client}{mesgCnt}
+                            . $Conf{ServerMesgSecret} . $2),
+                     $md5->b64digest ne $1) ) {
+                print(LOG $bpc->timeStamp, "Corrupted message '$cmd' from"
+                            . " client '$Clients{$client}{clientName}':"
+                            . " shutting down client connection\n");
+                $nbytes = 0;
+                last;
+            }
+            $Clients{$client}{mesgCnt}++;
+            $cmd = decode_utf8($2);
+            if ( $cmd =~ /^stop (\S+)\s+(\S+)\s+(\S*)/ ) {
+                $host = $1;
+                my $user = $2;
+                my $backoff = $3;
+		$host = $bpc->uriUnesc($host);
+                if ( $CmdJob ne $host && defined($Status{$host})
+                                      && defined($Jobs{$host}) ) {
+                    print(LOG $bpc->timeStamp,
+                               "Stopping current $Jobs{$host}{type} of $host,"
+                             . " request by $user (backoff=$backoff)\n");
+                    kill($bpc->sigName2num("INT"), $Jobs{$host}{pid});
+		    #
+		    # Don't close the pipe now; wait until the child
+		    # really exits later.  Otherwise close() will
+		    # block until the child has exited.
+		    #  old code:
+                    ##vec($FDread, $Jobs{$host}{fn}, 1) = 0;
+                    ##close($Jobs{$host}{fh});
+                    ##delete($Jobs{$host});
+
+                    $Status{$host}{state}    = "Status_idle";
+		    if ( $Jobs{$host}{type} eq "restore" ) {
+			$Status{$host}{reason}
+				    = "Reason_restore_canceled_by_user";
+		    } elsif ( $Jobs{$host}{type} eq "archive" ) {
+			$Status{$host}{reason}
+				    = "Reason_archive_canceled_by_user";
+		    } else {
+			$Status{$host}{reason}
+				    = "Reason_backup_canceled_by_user";
+		    }
+                    $Status{$host}{activeJob} = 0;
+                    $Status{$host}{startTime} = time;
+                    $reply = "ok: $Jobs{$host}{type} of $host canceled";
+                } elsif ( $BgQueueOn{$host} || $UserQueueOn{$host} ) {
+                    print(LOG $bpc->timeStamp,
+                               "Stopping pending backup of $host,"
+                             . " request by $user (backoff=$backoff)\n");
+                    @BgQueue = grep($_->{host} ne $host, @BgQueue);
+                    @UserQueue = grep($_->{host} ne $host, @UserQueue);
+                    $BgQueueOn{$host} = $UserQueueOn{$host} = 0;
+                    $reply = "ok: pending backup of $host canceled";
+                } else {
+                    print(LOG $bpc->timeStamp,
+                               "Nothing to do for stop backup of $host,"
+                             . " request by $user (backoff=$backoff)\n");
+                    $reply = "ok: no backup was pending or running";
+                }
+                if ( defined($Status{$host}) && $backoff ne "" ) {
+                    if ( $backoff > 0 ) {
+                        $Status{$host}{backoffTime} = time + $backoff * 3600;
+                    } else {
+                        delete($Status{$host}{backoffTime});
+                    }
+                }
+            } elsif ( $cmd =~ /^backup all$/ ) {
+                QueueAllPCs();
+            } elsif ( $cmd =~ /^BackupPC_nightly run$/ ) {
+                $RunNightlyWhenIdle = 1;
+            } elsif ( $cmd =~ /^backup (\S+)\s+(\S+)\s+(\S+)\s+(\S+)/ ) {
+                my $hostIP     = $1;
+                $host          = $2;
+                my $user       = $3;
+                my $backupType = $4;
+		$host          = $bpc->uriUnesc($host);
+		$hostIP        = $bpc->uriUnesc($hostIP);
+                if ( !defined($Hosts->{$host}) ) {
+                    print(LOG $bpc->timeStamp,
+                               "User $user requested backup of unknown host"
+                             . " $host\n");
+                    $reply = "error: unknown host $host";
+                } else {
+                    #
+                    # Handle numeric backupType for backward compatibility
+                    # (technically -1 is a new feature for auto)
+                    #
+                    $backupType = 'auto'   if ( $backupType eq '-1' );
+                    $backupType = 'doIncr' if ( $backupType eq '0' );
+                    $backupType = 'doFull' if ( $backupType eq '1' );
+                    if ( $backupType !~ /^doIncr|doFull|autoIncr|autoFull|auto$/i ) {
+                        $reply = "error: unknown backup type $backupType";
+                    } else {
+                        print(LOG $bpc->timeStamp,
+                                   "User $user requested backup of $host"
+                                 . " ($hostIP)\n");
+                        if ( $BgQueueOn{$hostIP} ) {
+                            @BgQueue = grep($_->{host} ne $hostIP, @BgQueue);
+                            $BgQueueOn{$hostIP} = 0;
+                        }
+                        if ( $UserQueueOn{$hostIP} ) {
+                            @UserQueue = grep($_->{host} ne $hostIP, @UserQueue);
+                            $UserQueueOn{$hostIP} = 0;
+                        }
+                        my $status = QueueOnePC($host, $hostIP, $user, 'user', $backupType);
+                        if ( $status == 0 ) {
+                            $reply = "ok: requested backup of $host ($backupType)";
+                        } elsif ( $status == 1 ) {
+                            #should never see this we just dequeued it
+                            $reply = "warning: $host was already queued."
+                                   . " Ignoring this request";
+                        } elsif ( $status == 2 ) {
+                            print(LOG $bpc->timeStamp,
+                                   "Disk too full ($Info{DUlastValue}%)."
+                                 . " Not queueing backup of $host\n");
+                            $reply = "error: disk too full ($Info{DUlastValue}%)";
+                            $Info{DUDailySkipHostCnt}++;
+                        } elsif ( $status == 3 ) {
+                            # should never reach this because
+                            # it's set to "user" above
+                            $reply = "error: unknown queue name";
+                        } else {
+                            $reply = "error: unknown queue status $status";
+                            if ( $BgQueueOn{$hostIP} || $UserQueueOn{$hostIP} ) {
+                                $reply .= ".  Host is queued.";
+                            } else {
+                                $reply .= ".  Host is not queued.";
+                            }
+                        }
+                    }
+                }
+            } elsif ( $cmd =~ /^archive (\S+)\s+(\S+)\s+(\S+)/ ) {
+                my $user         = $1;
+                my $archivehost  = $2;
+                my $reqFileName  = $3;
+		$host      = $bpc->uriUnesc($archivehost);
+                if ( !defined($Status{$host}) ) {
+                    print(LOG $bpc->timeStamp,
+                               "User $user requested archive of unknown archive host"
+                             . " $host");
+                    $reply = "archive error: unknown archive host $host";
+                } else {
+                    print(LOG $bpc->timeStamp,
+                               "User $user requested archive on $host"
+                             . " ($host)\n");
+                    if ( defined($Jobs{$host}) ) {
+                        $reply = "Archive currently running on $host, please try later";
+                    } else {
+                        unshift(@UserQueue, {
+                                host    => $host,
+                                user    => $user,
+                                reqFileName => $reqFileName,
+                                reqTime => time,
+                                dhcp    => 0,
+                                archive => 1,
+				userReq => 1,
+                        });
+                        $UserQueueOn{$host} = 1;
+                        $reply = "ok: requested archive on $host";
+                    }
+                }
+            } elsif ( $cmd =~ /^restore (\S+)\s+(\S+)\s+(\S+)\s+(\S+)/ ) {
+                my $hostIP = $1;
+                $host      = $2;
+                my $user   = $3;
+                my $reqFileName = $4;
+		$host      = $bpc->uriUnesc($host);
+		$hostIP    = $bpc->uriUnesc($hostIP);
+                if ( !defined($Hosts->{$host}) ) {
+                    print(LOG $bpc->timeStamp,
+                               "User $user requested restore to unknown host"
+                             . " $host");
+                    $reply = "restore error: unknown host $host";
+                } else {
+                    print(LOG $bpc->timeStamp,
+                               "User $user requested restore to $host"
+                             . " ($hostIP)\n");
+                    unshift(@UserQueue, {
+                                host    => $host,
+                                hostIP  => $hostIP,
+                                reqFileName => $reqFileName,
+                                reqTime => time,
+                                dhcp    => 0,
+                                restore => 1,
+				userReq => 1,
+                        });
+                    $UserQueueOn{$host} = 1;
+                    if ( defined($Jobs{$host}) ) {
+                        $reply = "ok: requested restore of $host, but a"
+                               . " job is currently running,"
+                               . " so this request will start later";
+                    } else {
+                        $reply = "ok: requested restore of $host";
+                    }
+                }
+            } elsif ( $cmd =~ /^status\s*(.*)/ ) {
+                my($args) = $1;
+                my($dump, @values, @names);
+                foreach my $type ( split(/\s+/, $args) ) {
+                    if ( $type =~ /^queues/ ) {
+                        push(@values,  \@BgQueue, \@UserQueue, \@CmdQueue);
+                        push(@names, qw(*BgQueue   *UserQueue   *CmdQueue));
+                    } elsif ( $type =~ /^jobs/ ) {
+                        push(@values,  \%Jobs);
+                        push(@names, qw(*Jobs));
+                    } elsif ( $type =~ /^queueLen/ ) {
+                        push(@values,  {
+                                BgQueue   => scalar(@BgQueue),
+                                UserQueue => scalar(@UserQueue),
+                                CmdQueue  => scalar(@CmdQueue),
+                            });
+                        push(@names, qw(*QueueLen));
+                    } elsif ( $type =~ /^info/ ) {
+                        push(@values,  \%Info);
+                        push(@names, qw(*Info));
+                    } elsif ( $type =~ /^hosts/ ) {
+                        push(@values,  \%Status);
+                        push(@names, qw(*Status));
+                    } elsif ( $type =~ /^host\((.*)\)/ ) {
+			my $h = $bpc->uriUnesc($1);
+                        if ( defined($Status{$h}) ) {
+                            push(@values,  {
+                                    %{$Status{$h}},
+                                    BgQueueOn => $BgQueueOn{$h},
+                                    UserQueueOn => $UserQueueOn{$h},
+                                    CmdQueueOn => $CmdQueueOn{$h},
+                                });
+                            push(@names, qw(*StatusHost));
+                        } else {
+                            print(LOG $bpc->timeStamp,
+                                      "Unknown host $h for status request\n");
+                        }
+                    } else {
+                        print(LOG $bpc->timeStamp,
+                                  "Unknown status request $type\n");
+                    }
+                }
+                $dump = Data::Dumper->new(\@values, \@names);
+                $dump->Indent(0);
+                $reply = $dump->Dump;
+            } elsif ( $cmd =~ /^link\s+(.+)/ ) {
+                my($host) = $1;
+		$host = $bpc->uriUnesc($host);
+                QueueLink($host);
+            } elsif ( $cmd =~ /^log\s+(.*)/ ) {
+                print(LOG $bpc->timeStamp, "$1\n");
+            } elsif ( $cmd =~ /^server\s+(\w+)/ ) {
+                my($type) = $1;
+                if ( $type eq 'reload' ) {
+                    ServerReload("Reloading config/host files via CGI request");
+                } elsif ( $type eq 'shutdown' ) {
+                    $reply = "Shutting down...\n";
+                    syswrite($Clients{$client}{fh}, $reply, length($reply));
+                    ServerShutdown("Server shutting down...");
+                }
+            } elsif ( $cmd =~ /^quit/ || $cmd =~ /^exit/ ) {
+                $nbytes = 0;
+                last;
+            } else {
+                print(LOG $bpc->timeStamp, "Unknown command $cmd\n");
+                $reply = "error: bad command $cmd";
+            }
+            #
+            # send a reply to the client, at a minimum "ok\n".
+            #
+            $reply = "ok" if ( $reply eq "" );
+            $reply .= "\n";
+            syswrite($Clients{$client}{fh}, $reply, length($reply));
+        }
+        #
+        # Detect possible denial-of-service attack from sending a huge line
+        # (ie: never terminated).  32K seems to be plenty big enough as
+        # a limit.
+        #
+        if ( length($Clients{$client}{mesg}) > 32 * 1024 ) {
+            print(LOG $bpc->timeStamp, "Line too long from client"
+                        . " '$Clients{$client}{clientName}':"
+                        . " shutting down client connection\n");
+            $nbytes = 0;
+        }
+        #
+        # Shut down the client connection if we read EOF
+        #
+        if ( $nbytes <= 0 ) {
+            close($Clients{$client}{fh});
+            vec($FDread, $Clients{$client}{fn}, 1) = 0;
+            delete($Clients{$client});
+        }
+    }
+    #
+    # Accept any new connections on each of our listen sockets
+    #
+    if ( vec($fdRead, fileno(SERVER_UNIX), 1) ) {
+        local(*CLIENT);
+        my $paddr = accept(CLIENT, SERVER_UNIX);
+        $ClientConnCnt++;
+        $Clients{$ClientConnCnt}{clientName} = "unix socket";
+        $Clients{$ClientConnCnt}{mesg} = "";
+        $Clients{$ClientConnCnt}{fh}   = *CLIENT;
+        $Clients{$ClientConnCnt}{fn}   = fileno(CLIENT);
+        vec($FDread, $Clients{$ClientConnCnt}{fn}, 1) = 1;
+        #
+        # Generate and send unique seed for MD5 digests to avoid
+        # replay attacks.  See BackupPC::Lib::ServerMesg().
+        #
+        my $seed = time . ",$ClientConnCnt,$$,0\n";
+        $Clients{$ClientConnCnt}{seed}    = $seed;
+        $Clients{$ClientConnCnt}{mesgCnt} = 0;
+        syswrite($Clients{$ClientConnCnt}{fh}, $seed, length($seed));
+    }
+    if ( $ServerInetPort > 0 && vec($fdRead, fileno(SERVER_INET), 1) ) {
+        local(*CLIENT);
+        my $paddr = accept(CLIENT, SERVER_INET);
+        my($port,$iaddr) = sockaddr_in($paddr); 
+        my $name = gethostbyaddr($iaddr, AF_INET);
+        $ClientConnCnt++;
+        $Clients{$ClientConnCnt}{mesg} = "";
+        $Clients{$ClientConnCnt}{fh}   = *CLIENT;
+        $Clients{$ClientConnCnt}{fn}   = fileno(CLIENT);
+        $Clients{$ClientConnCnt}{clientName} = "$name:$port";
+        vec($FDread, $Clients{$ClientConnCnt}{fn}, 1) = 1;
+        #
+        # Generate and send unique seed for MD5 digests to avoid
+        # replay attacks.  See BackupPC::Lib::ServerMesg().
+        #
+        my $seed = time . ",$ClientConnCnt,$$,$port\n";
+        $Clients{$ClientConnCnt}{seed}    = $seed;
+        $Clients{$ClientConnCnt}{mesgCnt} = 0;
+        syswrite($Clients{$ClientConnCnt}{fh}, $seed, length($seed));
+    }
+}
+
+###########################################################################
+# Miscellaneous subroutines
+###########################################################################
+
+#
+# Write the current status to $LogDir/status.pl
+#
+sub StatusWrite
+{
+    my($dump) = Data::Dumper->new(
+             [  \%Info, \%Status],
+             [qw(*Info   *Status)]);
+    $dump->Indent(1);
+    my $text = $dump->Dump;
+    $bpc->{storage}->TextFileWrite("$LogDir/status.pl", $text);
+}
+
+#
+# Compare function for host sort.  Hosts with errors go first,
+# sorted with the oldest errors first.  The remaining hosts
+# are sorted so that those with the oldest backups go first.
+#
+sub HostSortCompare
+{
+    #
+    # Hosts with errors go before hosts without errors
+    #
+    return -1 if ( $Status{$a}{error} ne "" && $Status{$b}{error} eq "" );
+
+    #
+    # Hosts with no errors go after hosts with errors
+    #
+    return  1 if ( $Status{$a}{error} eq "" && $Status{$b}{error} ne "" );
+
+    #
+    # hosts with the older last good backups sort earlier
+    #
+    my $r = $Status{$a}{lastGoodBackupTime} <=> $Status{$b}{lastGoodBackupTime};
+    return $r if ( $r );
+
+    #
+    # Finally, just sort based on host name
+    #
+    return $a cmp $b;
+}
+
+#
+# Attempt to queue a host.
+# Returns 0 on success; 1 if host is already queued;
+#         2 if host was skipped; 3 on invalid queue name
+#
+# $host       is the client's host name
+# $hostIP     is usually the client's host name too, or IP address
+#             if the user specified it in the manual backup command
+# $user       is the user name, or BackupPC by default
+# $queue      is which queue to use ("bg" by default)
+# $backupType is the backup type (doIncr|doFull|autoIncr|autoFull|auto|dhcpPoll)
+#
+# Note: starting in 3.2.0, the PC is queued even if it has a current
+# job running
+#
+sub QueueOnePC
+{
+    my($host, $hostIP, $user, $queue, $backupType) = @_;
+    my $retVal  = 0;
+    $user       = "BackupPC" if ( $user eq '' );
+    $queue      = "bg"   if ( $queue eq '' && $user eq 'BackupPC' );
+    $backupType = "auto" if ( $backupType eq '' );
+
+    delete($Status{$host}{backoffTime})
+            if ( defined($Status{$host}{backoffTime})
+                  && $Status{$host}{backoffTime} < time );
+    return 1 if ( $BgQueueOn{$host} || $UserQueueOn{$host} );
+    if ( $Hosts->{$host}{dhcp} ) {
+        $Status{$host}{dhcpCheckCnt}++;
+        if ( $RunNightlyWhenIdle ) {
+            #
+            # Once per night queue a check for DHCP hosts that just
+            # checks for expired dumps.  We need to do this to handle
+            # the case when a DHCP host has not been on the network for
+            # a long time, and some of the old dumps need to be expired.
+            # Normally expiry checks are done by BackupPC_dump only
+            # after the DHCP hosts has been detected on the network.
+            #
+            unshift(@BgQueue,
+                {host => $hostIP, user => $user, reqTime => time,
+                 dhcp => 0, dumpExpire => 1});
+            $BgQueueOn{$host} = 1;
+        }
+    } else {
+        #
+        # this is a fixed ip host or DHCP ip address: queue it
+        #
+        if ( $Info{DUlastValue} > $Conf{DfMaxUsagePct} ) {
+            #
+            # Since we are out of disk space, instead of queuing
+            # a regular job, queue an expire check instead.  That
+            # way if the admin reduces the number of backups to
+            # keep then we will actually delete them.  Otherwise
+            # BackupPC_dump will never run since we have exceeded
+            # the limit.
+            #
+            $retVal = 2;
+            unshift(@BgQueue,
+                {host => $hostIP, user => $user, reqTime => time, dumpExpire => 1});
+            $BgQueueOn{$host} = 1;
+        } elsif( $queue eq 'bg' ) {
+            #
+            # Queue regular background backup
+            #
+            unshift(@BgQueue,
+                {host => $hostIP, user => $user, reqTime => time, backupType => $backupType});
+            $BgQueueOn{$host} = 1;
+        } elsif( $queue eq 'user' ) {
+            #
+            # Queue user backup
+            #
+            unshift(@UserQueue,
+                {host => $hostIP, user => $user, reqTime => time, backupType => $backupType});
+            $UserQueueOn{$host} = 1;
+        } else {
+            # unknown $queue type
+            $retVal = 3;
+        }
+    }
+
+    return $retVal;
+}
+
+#
+# Queue all the hosts for backup.  This means queuing all the fixed
+# ip hosts and all the dhcp address ranges.  We also additionally
+# queue the dhcp hosts with a -e flag to check for expired dumps.
+#
+sub QueueAllPCs
+{
+    my $nSkip = 0;
+
+    foreach my $host ( sort HostSortCompare keys(%$Hosts) ) {
+        $nSkip++ if ( QueueOnePC($host, $host, 'BackupPC', 'bg', 'auto') == 2 );
+    }
+    foreach my $dhcp ( @{$Conf{DHCPAddressRanges}} ) {
+        for ( my $i = $dhcp->{first} ; $i <= $dhcp->{last} ; $i++ ) {
+            my $ipAddr = "$dhcp->{ipAddrBase}.$i";
+            $nSkip++ if ( QueueOnePC($ipAddr, $ipAddr, 'BackupPC', 'bg', 'dhcpPoll') == 2 );
+        }
+    }
+    if ( $nSkip ) {
+        print(LOG $bpc->timeStamp,
+               "Disk too full ($Info{DUlastValue}%); skipped $nSkip hosts\n");
+        $Info{DUDailySkipHostCnt} += $nSkip;
+    }
+}
+
+#
+# Queue a BackupPC_link for the given host
+#
+sub QueueLink
+{
+    my($host) = @_;
+
+    return if ( $CmdQueueOn{$host} );
+    $Status{$host}{state}    = "Status_link_pending";
+    $Status{$host}{needLink} = 0;
+    unshift(@CmdQueue, {
+            host    => $host,
+            user    => "BackupPC",
+            reqTime => time,
+            cmd     => ["$BinDir/BackupPC_link",  $host],
+        });
+    $CmdQueueOn{$host} = 1;
+}
+
+#
+# Read the hosts file, and update Status if any hosts have been
+# added or deleted.  We also track the mtime so the only need to
+# update the hosts file on changes.
+#
+# This function is called at startup, SIGHUP, and on each wakeup.
+# It returns 1 on success and undef on failure.
+#
+sub HostsUpdate
+{
+    my($force) = @_;
+    my $newHosts;
+    #
+    # Nothing to do if we already have the current hosts file
+    #
+    return 1 if ( !$force && defined($Hosts)
+                          && $Info{HostsModTime} == $bpc->HostsMTime() );
+    if ( !defined($newHosts = $bpc->HostInfoRead()) ) {
+        print(LOG $bpc->timeStamp, "Can't read hosts file!\n");
+        return;
+    }
+    print(LOG $bpc->timeStamp, "Reading hosts file\n");
+    $Hosts = $newHosts;
+    $Info{HostsModTime} = $bpc->HostsMTime();
+    #
+    # Now update %Status in case any hosts have been added or deleted
+    #
+    foreach my $host ( sort(keys(%$Hosts)) ) {
+        next if ( defined($Status{$host}) );
+        $Status{$host}{state} = "Status_idle";
+        print(LOG $bpc->timeStamp, "Added host $host to backup list\n");
+    }
+    foreach my $host ( sort(keys(%Status)) ) {
+        next if ( $host eq $bpc->trashJob
+                     || $bpc->isAdminJob($host)
+                     || defined($Hosts->{$host})
+                     || defined($Jobs{$host})
+                     || $BgQueueOn{$host}
+                     || $UserQueueOn{$host}
+                     || $CmdQueueOn{$host} );
+        print(LOG $bpc->timeStamp, "Deleted host $host from backup list\n");
+        delete($Status{$host});
+    }
+    return 1;
+}
+
+#
+# Remember the signal name for later processing
+#
+sub catch_signal
+{
+    if ( $SigName ) {
+        $SigName = shift;
+        foreach my $host ( keys(%Jobs) ) {
+            kill($bpc->sigName2num("INT"), $Jobs{$host}{pid});
+        }
+        #
+        # In case we are inside the exit handler, reopen the log file
+        #
+        close(LOG);
+        LogFileOpen();
+        print(LOG "Fatal error: unhandled signal $SigName\n");
+        unlink("$LogDir/BackupPC.pid");
+        confess("Got new signal $SigName... quitting\n");
+    } else {
+	$SigName = shift;
+    }
+}
+
+#
+# Open the log file and point STDOUT and STDERR there too
+#
+sub LogFileOpen
+{
+    mkpath($LogDir, 0, 0777) if ( !-d $LogDir );
+    open(LOG, ">>$LogDir/LOG")
+            || die("Can't create LOG file $LogDir/LOG");
+    close(STDOUT);
+    close(STDERR);
+    open(STDOUT, ">&LOG");
+    open(STDERR, ">&LOG");
+    select(LOG);    $| = 1;
+    select(STDERR); $| = 1;
+    select(STDOUT); $| = 1;
+}
+
+#
+# Initialize the unix-domain and internet-domain sockets that
+# we listen to for client connections (from the CGI script and
+# some of the BackupPC sub-programs).
+#
+sub ServerSocketInit
+{
+    if ( !defined(fileno(SERVER_UNIX)) ) {
+        #
+        # one-time only: initialize unix-domain socket
+        #
+        if ( !socket(SERVER_UNIX, PF_UNIX, SOCK_STREAM, 0) ) {
+            print(LOG $bpc->timeStamp, "unix socket() failed: $!\n");
+            exit(1);
+        }
+        my $sockFile = "$LogDir/BackupPC.sock";
+        unlink($sockFile);
+        if ( !bind(SERVER_UNIX, sockaddr_un($sockFile)) ) {
+            print(LOG $bpc->timeStamp, "unix bind() failed: $!\n");
+            exit(1);
+        }
+        if ( !listen(SERVER_UNIX, SOMAXCONN) ) {
+            print(LOG $bpc->timeStamp, "unix listen() failed: $!\n");
+            exit(1);
+        }
+        vec($FDread, fileno(SERVER_UNIX), 1) = 1;
+    }
+    return if ( $ServerInetPort == $Conf{ServerPort} );
+    if ( $ServerInetPort > 0 ) {
+        vec($FDread, fileno(SERVER_INET), 1) = 0;
+        close(SERVER_INET);
+        $ServerInetPort = -1;
+    }
+    if ( $Conf{ServerPort} > 0 ) {
+        #
+        # Setup a socket to listen on $Conf{ServerPort}
+        #
+        my $proto = getprotobyname('tcp');
+        if ( !socket(SERVER_INET, PF_INET, SOCK_STREAM, $proto) ) {
+            print(LOG $bpc->timeStamp, "inet socket() failed: $!\n");
+            exit(1);
+        }
+        if ( !setsockopt(SERVER_INET, SOL_SOCKET, SO_REUSEADDR, pack("l",1)) ) {
+            print(LOG $bpc->timeStamp, "setsockopt() failed: $!\n");
+            exit(1);
+        }
+        if ( !bind(SERVER_INET, sockaddr_in($Conf{ServerPort}, INADDR_ANY)) ) {
+            print(LOG $bpc->timeStamp, "inet bind() failed: $!\n");
+            exit(1);
+        }
+        if ( !listen(SERVER_INET, SOMAXCONN) ) {
+            print(LOG $bpc->timeStamp, "inet listen() failed: $!\n");
+            exit(1);
+        }
+        vec($FDread, fileno(SERVER_INET), 1) = 1;
+        $ServerInetPort = $Conf{ServerPort};
+    }
+}
+
+#
+# Reload the server.  Used by Main_Process_Signal when $SigName eq "HUP"
+# or when the command "server reload" is received.
+#
+sub ServerReload
+{
+    my($mesg) = @_;
+    $mesg = $bpc->ConfigRead() || $mesg;
+    print(LOG $bpc->timeStamp, "$mesg\n");
+    $Info{ConfigModTime} = $bpc->ConfigMTime();
+    %Conf = $bpc->Conf();
+    umask($Conf{UmaskMode});
+    ServerSocketInit();
+    HostsUpdate(0);
+    $NextWakeup = 0;
+    $Info{ConfigLTime} = time;
+}
+
+#
+# Gracefully shutdown the server.  Used by Main_Process_Signal when
+# $SigName ne "" && $SigName ne "HUP" or when the command
+# "server shutdown" is received.
+#
+sub ServerShutdown
+{
+    my($mesg) = @_;
+    print(LOG $bpc->timeStamp, "$mesg\n");
+    if ( keys(%Jobs) ) {
+        foreach my $host ( keys(%Jobs) ) {
+            kill($bpc->sigName2num("INT"), $Jobs{$host}{pid});
+        }
+        sleep(1);
+        foreach my $host ( keys(%Jobs) ) {
+            kill($bpc->sigName2num("KILL"), $Jobs{$host}{pid});
+        }
+        %Jobs = ();
+    }
+    delete($Info{pid});
+    StatusWrite();
+    unlink("$LogDir/BackupPC.pid");
+    exit(1);
+}
+
