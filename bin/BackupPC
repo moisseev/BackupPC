@@ -1198,6 +1198,47 @@ sub Main_Check_Job_Messages
 				     $Info{"${p}FileRepMax"},
 				     $Info{"${p}FileLinkMax"}, $Info{"${p}DirCnt"});
 			}
+
+			#
+			# RRDTool Graphing stuff
+			#
+			if ( -x "$BinDir/rrdtool" ) {
+			    my $date = time() + (24 * 3600);
+			    if ( ! -f "$LogDir/pool.rrd" ) {
+				system("$BinDir/rrdtool create $LogDir/pool.rrd"
+				  . " --step 86400"
+				  . " DS:ckb:GAUGE:172800:0:U"
+				  . " DS:tps:GAUGE:172800:0:U"
+				  . " RRA:AVERAGE:0.5:1:1400"
+				);
+			    }
+
+			    #
+			    # Generate size totals prior to poolng and compression
+			    #
+			    my $sizeTot;
+			    foreach my $host ( sort(keys(%{$bpc->HostInfoRead()})) ) {
+				my @Backups = $bpc->BackupInfoRead($host);
+				for ( my $i = 0 ; $i < @Backups ; $i++ ) {
+				    $sizeTot += $Backups[$i]{size};
+				}
+			    }
+
+			    $sizeTot = $sizeTot / 1024;
+
+			    system("$BinDir/rrdtool update $LogDir/pool.rrd"
+			      . " $date:"
+			      . ( $Info{"cpoolKb"} + $Info{"poolKb"} )
+			      . ":$sizeTot"
+			    );
+
+			    printf(LOG "%sRRD Data: %s:%f:%f\n",
+			      $bpc->timeStamp,
+			      $date,
+			      $Info{"cpoolKb"} + $Info{"poolKb"},
+			      $sizeTot);
+			}
+
                     }
                 } else {
                     $CmdJob = "";
