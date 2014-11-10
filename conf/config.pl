@@ -2069,6 +2069,13 @@ $Conf{CgiUserUrlCreate}     = 'mailto:%s';
 $Conf{CgiDateFormatMMDD} = 1;
 
 #
+# File size display format for CGI interface.  A value of 1 uses sizes
+# in bytes with space as a thousand separator, a value of 2 uses format
+# with SI prefixes, and zero for sizes in bytes.
+#
+$Conf{CgiFileSizeFormat} = 0;
+
+#
 # If set, the complete list of hosts appears in the left navigation
 # bar pull-down for administrators.  Otherwise, just the hosts for which
 # the user is listed in the host file (as either the user or in moreUsers)

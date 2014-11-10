@@ -329,6 +329,9 @@ sub ConnectData
     CgiDateFormatMMDD            => {struct => 'SCALAR',
                                      type   => 'BOOLEAN', },
 
+    CgiFileSizeFormat            => {struct => 'SCALAR',
+                                     type   => 'BOOLEAN', },
+
     CgiNavBarAdminAllHosts       => {struct => 'SCALAR',
                                      type   => 'BOOLEAN', },
 

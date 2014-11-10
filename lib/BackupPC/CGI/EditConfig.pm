@@ -147,6 +147,7 @@ our %ConfigMenu = (
 	    {name => "CgiNavBarLinks"},
 	    {name => "CgiStatusHilightColor"},
 	    {name => "CgiDateFormatMMDD"},
+	    {name => "CgiFileSizeFormat"},
 	    {name => "CgiHeaders"},
 	    {name => "CgiExt2ContentType"},
 	    {name => "CgiCSSFile"},

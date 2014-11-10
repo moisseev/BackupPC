@@ -210,6 +210,29 @@ sub timeStamp2
     }
 }
 
+sub formatFileSize {
+    my $value = shift;
+    if ( $Conf{CgiFileSizeFormat} == 2 ) {
+        my $threshold = 1000;
+        return sprintf '%u B', $value
+          if $value < $threshold;
+
+        $value /= 1024;
+        my @prefix = qw(K M G T P E Z Y);
+        while ( @prefix && $value >= $threshold ) {
+            $value /= 1024;
+            shift @prefix;
+        }
+        return sprintf '%.2f %siB', $value, $prefix[0];
+    #
+    # Insert separators
+    #
+    } elsif ( $Conf{CgiFileSizeFormat} ) {
+        $value =~ s/(\d)(?=(\d{3})+(\D|$))/$1\ /g;
+    }
+    return $value;
+}
+
 sub HostLink
 {
     my($host) = @_;

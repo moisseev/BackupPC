@@ -206,6 +206,7 @@ EOF
                     $iconStr = <<EOF;
 <img src="$Conf{CgiImageDirURL}/icon-$typeStr.png" valign="top">
 EOF
+                    $a->{size} = formatFileSize( $a->{size} );
                     $attrStr .= <<EOF;
     <td align="center" class="fviewborder">$typeStr</td>
     <td align="center" class="fviewborder">$modeStr</td>

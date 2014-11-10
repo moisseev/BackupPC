@@ -356,6 +356,7 @@ use vars qw(%ConfigMeta);
     CgiUserHomePageCheck => "string",
     CgiUserUrlCreate    => "string",
     CgiDateFormatMMDD	=> "integer",
+    CgiFileSizeFormat	=> "integer",
     CgiNavBarAdminAllHosts => "boolean",
     CgiSearchBoxEnable 	=> "boolean",
     CgiNavBarLinks	=> {
