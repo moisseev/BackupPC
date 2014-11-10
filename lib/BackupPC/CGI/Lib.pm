@@ -57,6 +57,7 @@ use vars qw($Lang);
 
 @EXPORT_OK = qw(
 		    timeStamp2
+		    formatFileSize
 		    HostLink
 		    UserLink
 		    EscHTML
