@@ -1,7 +1,7 @@
 =head1 BackupPC Introduction
 
-This documentation describes BackupPC version 3.3.0,
-released on 14 Apr 2013.
+This documentation describes BackupPC version 3.3.1,
+released on 11 Jan 2015.
 
 =head2 Overview
 
@@ -173,7 +173,7 @@ ownership, and modification time) separately from the file contents.
 
 Based on your site's requirements you need to decide what your backup
 policy is.  BackupPC is not designed to provide exact re-imaging of
-failed disks.  See L<Limitations> for more information.
+failed disks.  See L<Some Limitations> for more information.
 However, the addition of tar transport for linux/unix clients, plus
 full support for special file types and unix attributes in v1.4.0
 likely means an exact image of a linux/unix file system can be made.
@@ -483,7 +483,7 @@ single file, which often becomes huge. Any change to this file requires
 a separate copy of the file to be saved during backup. Outlook is even
 more troublesome, since it keeps this file locked all the time, so it
 cannot be read by smbclient whenever Outlook is running.  See the
-L<Limitations> section for more discussion of this problem.
+L<Some Limitations> section for more discussion of this problem.
 
 In addition to total disk space, you should make sure you have
 plenty of inodes on your BackupPC data partition. Some users have
@@ -577,29 +577,29 @@ and then run these commands:
 The same sequence of commands can be used for each module.
 
 Now let's move onto BackupPC itself.  After fetching
-BackupPC-3.3.0.tar.gz, run these commands as root:
+BackupPC-3.3.1.tar.gz, run these commands as root:
 
-    tar zxf BackupPC-3.3.0.tar.gz
-    cd BackupPC-3.3.0
+    tar zxf BackupPC-3.3.1.tar.gz
+    cd BackupPC-3.3.1
     perl configure.pl
 
 In the future this release might also have patches available on the
 SourceForge site.  These patch files are text files, with a name of
 the form
 
-    BackupPC-3.3.0plN.diff
+    BackupPC-3.3.1plN.diff
 
 where N is the patch level, eg: pl2 is patch-level 2.  These
 patch files are cumulative: you only need apply the last patch
 file, not all the earlier patch files.  If a patch file is
-available, eg: BackupPC-3.3.0pl2.diff, you should apply
+available, eg: BackupPC-3.3.1pl2.diff, you should apply
 the patch after extracting the tar file:
 
-     # fetch BackupPC-3.3.0.tar.gz
-     # fetch BackupPC-3.3.0pl2.diff
-     tar zxf BackupPC-3.3.0.tar.gz
-     cd BackupPC-3.3.0
-     patch -p0 < ../BackupPC-3.3.0pl2.diff
+     # fetch BackupPC-3.3.1.tar.gz
+     # fetch BackupPC-3.3.1pl2.diff
+     tar zxf BackupPC-3.3.1.tar.gz
+     cd BackupPC-3.3.1
+     patch -p0 < ../BackupPC-3.3.1pl2.diff
      perl configure.pl
 
 A patch file includes comments that describe that bug fixes
@@ -2688,10 +2688,10 @@ since it saves attribute meta-data separate from the files.  Since
 BackupPC mostly does reads from disk, maintaining the access time of
 files generates a lot of unnecessary disk writes.  So, provided 
 BackupPC has a dedicated data disk, you should consider mounting
-BackupPC's data directory with the noatime (or, with Linux kernels
->=2.6.20, relatime) attribute (see mount(1)).
+BackupPC's data directory with the noatime (or, with Linux
+kernels >=2.6.20, relatime) attribute (see mount(1)).
 
-=head2 Limitations
+=head2 Some Limitations
 
 BackupPC isn't perfect (but it is getting better). Please see
 L<http://backuppc.sourceforge.net/faq/limitations.html> for a
@@ -3364,6 +3364,11 @@ be kept around before the oldest ones are pruned.
 List of directories or files to backup.  If this is defined, only these
 directories or files will be backed up.
 
+When editing from the web interface, you should add a valid ShareName
+(based on $Conf{XferMethod}), and then enter the directories specific
+to that ShareName.  A special ShareName "*" matches any ShareName that
+doesn't have an explicit entry.
+
 For Smb, only one of $Conf{BackupFilesExclude} and $Conf{BackupFilesOnly}
 can be specified per share. If both are set for a particular share, then
 $Conf{BackupFilesOnly} takes precedence and $Conf{BackupFilesExclude}
@@ -3400,6 +3405,11 @@ only one of $Conf{BackupFilesExclude} and $Conf{BackupFilesOnly}
 can be specified per share.  If both are set for a particular share,
 then $Conf{BackupFilesOnly} takes precedence and
 $Conf{BackupFilesExclude} is ignored.
+
+When editing from the web interface, you should add a valid ShareName
+(based on $Conf{XferMethod}), and then enter the directories or files
+specific to that ShareName.  A special ShareName "*" matches any
+ShareName that doesn't have an explicit entry.
 
 This can be set to a string, an array of strings, or, in the case
 of multiple shares, a hash of strings or arrays.  A hash is used
@@ -4777,7 +4787,7 @@ See L<http://backuppc.sourceforge.net>.
 
 =head1 Copyright
 
-Copyright (C) 2001-2013 Craig Barratt
+Copyright (C) 2001-2015 Craig Barratt
 
 =head1 Credits
 

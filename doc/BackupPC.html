@@ -75,7 +75,7 @@
       <li><a href="#Special-files">Special files</a></li>
       <li><a href="#Attribute-file-format">Attribute file format</a></li>
       <li><a href="#Optimizations">Optimizations</a></li>
-      <li><a href="#Limitations">Limitations</a></li>
+      <li><a href="#Some-Limitations">Some Limitations</a></li>
       <li><a href="#Security-issues">Security issues</a></li>
     </ul>
   </li>
@@ -108,7 +108,7 @@
 <hr />
 <h1 id="BackupPC-Introduction">BackupPC Introduction</h1>
 
-<p>This documentation describes BackupPC version 3.3.0, released on 14 Apr 2013.</p>
+<p>This documentation describes BackupPC version 3.3.1, released on 11 Jan 2015.</p>
 
 <h2 id="Overview">Overview</h2>
 
@@ -195,7 +195,7 @@
 <dt id="Backup-Policy">Backup Policy</dt>
 <dd>
 
-<p>Based on your site&#39;s requirements you need to decide what your backup policy is. BackupPC is not designed to provide exact re-imaging of failed disks. See <a>Limitations</a> for more information. However, the addition of tar transport for linux/unix clients, plus full support for special file types and unix attributes in v1.4.0 likely means an exact image of a linux/unix file system can be made.</p>
+<p>Based on your site&#39;s requirements you need to decide what your backup policy is. BackupPC is not designed to provide exact re-imaging of failed disks. See <a href="#Some-Limitations">&quot;Some Limitations&quot;</a> for more information. However, the addition of tar transport for linux/unix clients, plus full support for special file types and unix attributes in v1.4.0 likely means an exact image of a linux/unix file system can be made.</p>
 
 <p>BackupPC saves backups onto disk. Because of pooling you can relatively economically keep several weeks of old backups.</p>
 
@@ -361,7 +361,7 @@
 
 <p>For example, the Eudora email tool stores each mail folder in a separate file, and attachments are extracted as separate files. So in the sadly common case of a large attachment emailed to many recipients, Eudora will extract the attachment into a new file. When these machines are backed up, only one copy of the file will be stored on the server, even though the file appears in many different full or incremental backups. In this sense Eudora is a &quot;friendly&quot; application from the point of view of backup storage requirements.</p>
 
-<p>An example at the other end of the spectrum is Outlook. Everything (email bodies, attachments, calendar, contact lists) is stored in a single file, which often becomes huge. Any change to this file requires a separate copy of the file to be saved during backup. Outlook is even more troublesome, since it keeps this file locked all the time, so it cannot be read by smbclient whenever Outlook is running. See the <a>Limitations</a> section for more discussion of this problem.</p>
+<p>An example at the other end of the spectrum is Outlook. Everything (email bodies, attachments, calendar, contact lists) is stored in a single file, which often becomes huge. Any change to this file requires a separate copy of the file to be saved during backup. Outlook is even more troublesome, since it keeps this file locked all the time, so it cannot be read by smbclient whenever Outlook is running. See the <a href="#Some-Limitations">&quot;Some Limitations&quot;</a> section for more discussion of this problem.</p>
 
 <p>In addition to total disk space, you should make sure you have plenty of inodes on your BackupPC data partition. Some users have reported running out of inodes on their BackupPC data partition. So even if you have plenty of disk space, BackupPC will report failures when the inodes are exhausted. This is a particular problem with ext2/ext3 file systems that have a fixed number of inodes when the file system is built. Use &quot;df -i&quot; to see your inode usage.</p>
 
@@ -426,23 +426,23 @@
 
 <p>The same sequence of commands can be used for each module.</p>
 
-<p>Now let&#39;s move onto BackupPC itself. After fetching BackupPC-3.3.0.tar.gz, run these commands as root:</p>
+<p>Now let&#39;s move onto BackupPC itself. After fetching BackupPC-3.3.1.tar.gz, run these commands as root:</p>
 
-<pre><code>    tar zxf BackupPC-3.3.0.tar.gz
-    cd BackupPC-3.3.0
+<pre><code>    tar zxf BackupPC-3.3.1.tar.gz
+    cd BackupPC-3.3.1
     perl configure.pl</code></pre>
 
 <p>In the future this release might also have patches available on the SourceForge site. These patch files are text files, with a name of the form</p>
 
-<pre><code>    BackupPC-3.3.0plN.diff</code></pre>
+<pre><code>    BackupPC-3.3.1plN.diff</code></pre>
 
-<p>where N is the patch level, eg: pl2 is patch-level 2. These patch files are cumulative: you only need apply the last patch file, not all the earlier patch files. If a patch file is available, eg: BackupPC-3.3.0pl2.diff, you should apply the patch after extracting the tar file:</p>
+<p>where N is the patch level, eg: pl2 is patch-level 2. These patch files are cumulative: you only need apply the last patch file, not all the earlier patch files. If a patch file is available, eg: BackupPC-3.3.1pl2.diff, you should apply the patch after extracting the tar file:</p>
 
-<pre><code>     # fetch BackupPC-3.3.0.tar.gz
-     # fetch BackupPC-3.3.0pl2.diff
-     tar zxf BackupPC-3.3.0.tar.gz
-     cd BackupPC-3.3.0
-     patch -p0 &lt; ../BackupPC-3.3.0pl2.diff
+<pre><code>     # fetch BackupPC-3.3.1.tar.gz
+     # fetch BackupPC-3.3.1pl2.diff
+     tar zxf BackupPC-3.3.1.tar.gz
+     cd BackupPC-3.3.1
+     patch -p0 &lt; ../BackupPC-3.3.1pl2.diff
      perl configure.pl</code></pre>
 
 <p>A patch file includes comments that describe that bug fixes and changes. Feel free to review it before you apply the patch.</p>
@@ -1902,7 +1902,7 @@
 
 <p>BackupPC doesn&#39;t care about the access time of files in the pool since it saves attribute meta-data separate from the files. Since BackupPC mostly does reads from disk, maintaining the access time of files generates a lot of unnecessary disk writes. So, provided BackupPC has a dedicated data disk, you should consider mounting BackupPC&#39;s data directory with the noatime (or, with Linux kernels &gt;=2.6.20, relatime) attribute (see mount(1)).</p>
 
-<h2 id="Limitations">Limitations</h2>
+<h2 id="Some-Limitations">Some Limitations</h2>
 
 <p>BackupPC isn&#39;t perfect (but it is getting better). Please see <a href="http://backuppc.sourceforge.net/faq/limitations.html">http://backuppc.sourceforge.net/faq/limitations.html</a> for a discussion of some of BackupPC&#39;s limitations.</p>
 
@@ -2444,6 +2444,8 @@
 
 <p>List of directories or files to backup. If this is defined, only these directories or files will be backed up.</p>
 
+<p>When editing from the web interface, you should add a valid ShareName (based on <a href="#_conf_xfermethod_">$Conf{XferMethod}</a>), and then enter the directories specific to that ShareName. A special ShareName &quot;*&quot; matches any ShareName that doesn&#39;t have an explicit entry.</p>
+
 <p>For Smb, only one of <a href="#_conf_backupfilesexclude_">$Conf{BackupFilesExclude}</a> and <a href="#_conf_backupfilesonly_">$Conf{BackupFilesOnly}</a> can be specified per share. If both are set for a particular share, then <a href="#_conf_backupfilesonly_">$Conf{BackupFilesOnly}</a> takes precedence and <a href="#_conf_backupfilesexclude_">$Conf{BackupFilesExclude}</a> is ignored.</p>
 
 <p>This can be set to a string, an array of strings, or, in the case of multiple shares, a hash of strings or arrays. A hash is used to give a list of directories or files to backup for each share (the share name is the key). If this is set to just a string or array, and <a href="#_conf_smbsharename_">$Conf{SmbShareName}</a> contains multiple share names, then the setting is assumed to apply all shares.</p>
@@ -2469,6 +2471,8 @@
 <dd>
 
 <p>List of directories or files to exclude from the backup. For Smb, only one of <a href="#_conf_backupfilesexclude_">$Conf{BackupFilesExclude}</a> and <a href="#_conf_backupfilesonly_">$Conf{BackupFilesOnly}</a> can be specified per share. If both are set for a particular share, then <a href="#_conf_backupfilesonly_">$Conf{BackupFilesOnly}</a> takes precedence and <a href="#_conf_backupfilesexclude_">$Conf{BackupFilesExclude}</a> is ignored.</p>
+
+<p>When editing from the web interface, you should add a valid ShareName (based on <a href="#_conf_xfermethod_">$Conf{XferMethod}</a>), and then enter the directories or files specific to that ShareName. A special ShareName &quot;*&quot; matches any ShareName that doesn&#39;t have an explicit entry.</p>
 
 <p>This can be set to a string, an array of strings, or, in the case of multiple shares, a hash of strings or arrays. A hash is used to give a list of directories or files to exclude for each share (the share name is the key). If this is set to just a string or array, and <a href="#_conf_smbsharename_">$Conf{SmbShareName}</a> contains multiple share names, then the setting is assumed to apply to all shares.</p>
 
@@ -3666,7 +3670,7 @@
 <hr />
 <h1 id="Copyright">Copyright</h1>
 
-<p>Copyright (C) 2001-2013 Craig Barratt</p>
+<p>Copyright (C) 2001-2015 Craig Barratt</p>
 
 <hr />
 <h1 id="Credits">Credits</h1>
