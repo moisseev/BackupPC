@@ -11,11 +11,25 @@
 #
 #========================================================================
 #
-# Version 3.3.0, released 14 Apr 2013.
+# Version 3.3.1, released 11 Jan 2015.
 #
 # See http://backuppc.sourceforge.net.
 #
 #========================================================================
+
+#------------------------------------------------------------------------
+# Version 3.3.1, 11 Jan 2015
+#------------------------------------------------------------------------
+
+* Added more helpful text (instead of "New Key") for BackupFilesOnly and
+  BackupFilesExclude in the CGI editor.
+
+* Removed deprecated defined(@Backups) from lib/BackupPC/CGI/Browse.pm;
+  patch from Alexander Moisseev.
+
+* Updated Spanish language file lib/BackupPC/Lang/es.pm from Luis Bustamante.
+
+* Updated init.d/debian-backuppc from Eduardo Díaz Rodríguez.
 
 #------------------------------------------------------------------------
 # Version 3.3.0, 14 Apr 2013
@@ -30,7 +44,7 @@
   and month.
 
 * Made the directory path display (when browsing backups or history) a sequence of links,
-  allowing any parent directory to be quick selected.
+  allowing any parent directory to be quickly selected.
 
 * Added Japanese language file lib/BackupPC/Lang/ja.pm submitted by Rikiya
   Yamamoto.
